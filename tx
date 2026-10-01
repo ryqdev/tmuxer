@@ -19,7 +19,7 @@ usage() {
         "  $PROGRAM remote select           Select a local or remote session (requires fzf)" \
         "  $PROGRAM remote list             List registered remote hosts without connecting" \
         "  $PROGRAM remote candidates       List SSH aliases available for registration" \
-        "  $PROGRAM remote register host [host ...]  Add remote hosts to the allow list" \
+        "  $PROGRAM remote register host [host ...]  Add SSH config aliases to the allow list" \
         "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
         "  $PROGRAM remote sessions         List local and registered remote sessions" \
         "  $PROGRAM remote help             Show remote command help" \
@@ -33,7 +33,7 @@ remote_usage() {
         "  $PROGRAM remote select           Select a local or remote session (requires fzf)" \
         "  $PROGRAM remote list             List every registered host, one per line" \
         "  $PROGRAM remote candidates       List SSH aliases available for registration" \
-        "  $PROGRAM remote register host [host ...]  Add remote hosts to the allow list" \
+        "  $PROGRAM remote register host [host ...]  Add SSH config aliases to the allow list" \
         "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
         "  $PROGRAM remote sessions [tmux global options...]  List local and remote sessions" \
         "  $PROGRAM remote help             Show help" \
@@ -106,12 +106,20 @@ load_registered_hosts() {
 }
 
 register_hosts() {
-    local host directory last_char=
+    local host candidate candidates found directory last_char=
     local -a new_hosts
     new_hosts=()
     [ "$#" -gt 0 ] || fail 'remote register requires at least one host'
     # Validate the whole request before changing the allow list.
     for host in "$@"; do validate_host "$host"; done
+    candidates=$(list_candidates) || exit $?
+    for host in "$@"; do
+        found=0
+        while IFS= read -r candidate; do
+            if [ "$host" = "$candidate" ]; then found=1; break; fi
+        done <<< "$candidates"
+        [ "$found" = 1 ] || fail "host is not an SSH config candidate: $host (run: $PROGRAM remote candidates)"
+    done
     load_registered_hosts
     for host in "$@"; do
         if ! host_is_registered "$host"; then

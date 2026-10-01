@@ -39,6 +39,7 @@ assert_status() {
 }
 clear_logs() { rm -f "$MOCK_LOG"/*; }
 write_row() { printf '%s\n' "$2" > "$MOCK_ROWS/$1"; }
+write_ssh_hosts() { printf 'Host %s\n' "$@" > "$HOME/.ssh/config"; }
 run_tr() { "$TEST_BASH" "$TR" "$@"; }
 minimal_path() {
     local tool
@@ -98,6 +99,7 @@ test_local_namespace() {
     assert_no_ssh
 }
 test_remote_quotes() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     run_tr remote exec box send-keys -H 'python x.py --a '\''b c'\''' '' "''''" 'a"b' '$HOME; $(touch nope)' $'two\nlines' '\path' </dev/null
     assert_args "$MOCK_LOG/tmux.box" send-keys -H 'python x.py --a '\''b c'\''' '' "''''" 'a"b' '$HOME; $(touch nope)' $'two\nlines' '\path'
@@ -105,12 +107,14 @@ test_remote_quotes() {
     [ ! -e "$CASE/nope" ]
 }
 test_exit_status() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     export MOCK_TMUX_STATUS=37
     assert_status 37 run_tr ls
     assert_status 37 run_tr remote exec box ls
 }
 test_global_options() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     run_tr -L 'local socket' ls
     assert_args "$MOCK_LOG/tmux.local" -L 'local socket' ls
@@ -124,6 +128,7 @@ test_global_options() {
     assert_args "$MOCK_LOG/tmux.box" -- send-keys -H
 }
 test_non_tty() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     local command
     for command in attach attach-session a at new new-session ls capture-pane send-keys ''; do
@@ -135,6 +140,7 @@ test_non_tty() {
     assert_contains "$CASE/piped" 'mock pane contents'
 }
 test_tty_attach() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     local command
     for command in attach attach-session a at new new-session ''; do
@@ -148,6 +154,7 @@ test_tty_attach() {
     assert_contains "$MOCK_LOG/ssh.box" '-t'
 }
 test_tty_other() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     local command
     for command in ls capture-pane send-keys; do
@@ -197,6 +204,7 @@ test_errors_help() {
 }
 test_remote_exec_names() {
     # Hostnames may be identical to subcommands; the exec position disambiguates.
+    write_ssh_hosts list candidates exec help sessions select register
     run_tr remote register list candidates exec help sessions select register > /dev/null
     local host
     for host in list candidates exec help sessions select register; do
@@ -206,6 +214,7 @@ test_remote_exec_names() {
     done
 }
 test_remote_list() {
+    write_ssh_hosts dev box
     # Missing or empty lists produce no output and do not create any files.
     run_tr remote list > "$CASE/out"
     [ ! -s "$CASE/out" ]
@@ -334,6 +343,7 @@ test_candidates_errors() {
 }
 test_register() {
     local mode
+    write_ssh_hosts dev box staging user@10.0.0.1 2001:db8::1 offline
     run_tr remote register dev box dev user@10.0.0.1 2001:db8::1 > "$CASE/out"
     assert_contains "$CASE/out" 'Registered: dev'
     run_tr remote register box staging > "$CASE/out"
@@ -356,6 +366,8 @@ test_register_concurrent() {
     local i pid
     local -a pids
     pids=()
+    write_ssh_hosts existing
+    for ((i=0; i<8; i++)); do printf 'Host server-%d\n' "$i" >> "$HOME/.ssh/config"; done
     run_tr remote register existing > /dev/null
     for ((i=0; i<8; i++)); do
         run_tr remote register "server-$i" > "$CASE/register-$i.out" &
@@ -374,6 +386,7 @@ test_register_concurrent() {
 }
 test_register_invalid() {
     local host
+    write_ssh_hosts dev staging
     assert_status 2 run_tr remote register
     assert_contains "$CASE/err" 'register requires at least one host'
     for host in '' -option all '[local]' 'two hosts' $'two\nhosts' $'two\thosts' 'wild*' 'wild?' '!negative' '[pattern]' '$(touch nope)' 'host;touch nope'; do
@@ -390,7 +403,90 @@ test_register_invalid() {
     printf 'dev\n' > "$CASE/expected"
     diff -u "$CASE/expected" "$HOME/.config/tmuxer/hosts"
 }
+test_register_candidates() {
+    write_ssh_hosts vultr
+    printf '    HostName real.example.com\nHost prod*\n' >> "$HOME/.ssh/config"
+    local host
+    # Reject typos, partial/case-insensitive matches, HostName values, and
+    # destinations only covered by a wildcard before writing any valid input.
+    for host in vult vultr-other Vultr real.example.com 192.0.2.10 user@vultr prod-other; do
+        assert_status 2 run_tr remote register vultr "$host"
+        assert_contains "$CASE/err" "host is not an SSH config candidate: $host"
+        assert_contains "$CASE/err" 'run: tx remote candidates'
+        [ ! -s "$CASE/out" ]
+        [ ! -e "$HOME/.config/tmuxer/hosts" ]
+    done
+    run_tr remote register vultr > /dev/null
+    cp "$HOME/.config/tmuxer/hosts" "$CASE/before"
+    assert_status 2 run_tr remote register vult vultr
+    diff -u "$CASE/before" "$HOME/.config/tmuxer/hosts"
+    assert_no_ssh
+    [ ! -e "$MOCK_LOG/tmux.local" ]
+    [ ! -e "$MOCK_LOG/fzf" ]
+}
+test_register_candidates_empty() {
+    assert_status 2 run_tr remote register dev
+    assert_contains "$CASE/err" 'host is not an SSH config candidate: dev'
+    [ ! -e "$HOME/.config/tmuxer/hosts" ]
+    : > "$HOME/.ssh/config"
+    assert_status 2 run_tr remote register dev
+    [ ! -e "$HOME/.config/tmuxer/hosts" ]
+    printf 'Host * !dev\nMatch exec "touch SHOULD_NOT_RUN"\n' > "$HOME/.ssh/config"
+    assert_status 2 run_tr remote register dev
+    [ ! -e "$HOME/.config/tmuxer/hosts" ]
+    [ ! -e "$CASE/SHOULD_NOT_RUN" ]
+    assert_no_ssh
+}
+test_register_candidates_includes() {
+    mkdir -p "$HOME/.ssh/config.d"
+    printf 'Host direct\nInclude config.d/*.conf\n' > "$HOME/.ssh/config"
+    printf 'Host included\nInclude nested.conf\n' > "$HOME/.ssh/config.d/one.conf"
+    printf 'Host nested\n' > "$HOME/.ssh/nested.conf"
+    export TR_HOSTS=
+    run_tr remote register direct included nested > "$CASE/out"
+    run_tr remote register nested included > "$CASE/out"
+    run_tr remote list > "$CASE/out"
+    printf '%s\n' direct included nested > "$CASE/expected"
+    diff -u "$CASE/expected" "$CASE/out"
+    assert_no_ssh
+}
+test_register_candidates_errors() {
+    write_ssh_hosts dev
+    run_tr remote register dev > /dev/null
+    cp "$HOME/.config/tmuxer/hosts" "$CASE/before"
+    printf 'Host dev staging\nHost "unfinished\n' > "$HOME/.ssh/config"
+    assert_status 2 run_tr remote register staging
+    assert_contains "$CASE/err" 'cannot parse SSH config'
+    [ ! -s "$CASE/out" ]
+    diff -u "$CASE/before" "$HOME/.config/tmuxer/hosts"
+    mkdir "$HOME/.ssh/unreadable-config"
+    printf 'Host staging\nInclude unreadable-config\n' > "$HOME/.ssh/config"
+    assert_status 2 run_tr remote register staging
+    assert_contains "$CASE/err" 'cannot read SSH config'
+    [ ! -s "$CASE/out" ]
+    diff -u "$CASE/before" "$HOME/.config/tmuxer/hosts"
+    assert_no_ssh
+}
+test_register_legacy_hosts() {
+    write_ssh_hosts dev
+    mkdir -p "$HOME/.config/tmuxer"
+    printf 'legacy\n' > "$HOME/.config/tmuxer/hosts"
+    run_tr remote register dev > /dev/null
+    run_tr remote list > "$CASE/out"
+    printf '%s\n' legacy dev > "$CASE/expected"
+    diff -u "$CASE/expected" "$CASE/out"
+    assert_status 2 run_tr remote register legacy
+    diff -u "$CASE/expected" "$HOME/.config/tmuxer/hosts"
+    assert_no_ssh
+    # Candidate validation applies to registration, without revoking old entries.
+    rm "$HOME/.ssh/config"
+    run_tr remote exec legacy ls
+    assert_args "$MOCK_LOG/tmux.legacy" ls
+    run_tr remote exec dev ls
+    assert_args "$MOCK_LOG/tmux.dev" ls
+}
 test_register_config_path() {
+    write_ssh_hosts box dev staging
     export XDG_CONFIG_HOME="$CASE/config directory's"
     run_tr remote register box > /dev/null
     [ -f "$XDG_CONFIG_HOME/tmuxer/hosts" ]
@@ -414,6 +510,7 @@ test_register_config_path() {
     assert_clean
 }
 test_register_io_errors() {
+    write_ssh_hosts box
     mkdir -p "$HOME/.config/tmuxer/hosts"
     assert_status 2 run_tr remote register box
     assert_contains "$CASE/err" 'cannot read allow list'
@@ -453,7 +550,9 @@ CONFIG
     assert_no_ssh
     assert_contains "$CASE/out" $'[local]\tlocal session'
     [ ! -e "$HOME/.config/tmuxer/hosts" ]
-    run_tr remote register dev outside-config > /dev/null
+    run_tr remote register dev > /dev/null
+    # Legacy allow-list entries remain usable without a current SSH candidate.
+    printf 'outside-config\n' >> "$HOME/.config/tmuxer/hosts"
     clear_logs
     unset TR_HOSTS
     run_tr remote sessions > "$CASE/out"
@@ -473,7 +572,7 @@ CONFIG
     assert_clean
 }
 test_hosts_filter() {
-    printf 'Host ignored\n' > "$HOME/.ssh/config"
+    write_ssh_hosts ignored alpha beta gamma excluded
     run_tr remote register alpha beta gamma excluded > /dev/null
     export TR_HOSTS=$'alpha beta alpha\ngamma\tunregistered star*'
     run_tr remote sessions > "$CASE/out"
@@ -514,6 +613,7 @@ test_unregistered_remote() {
     assert_status 0 run_tr ls
 }
 test_all_output() {
+    write_ssh_hosts box dead password
     run_tr remote register box dead password > /dev/null
     export TR_HOSTS='box dead password'
     write_row local 'local name:2:0'
@@ -530,6 +630,7 @@ test_all_output() {
     assert_clean
 }
 test_all_socket() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     export TR_HOSTS=box
     run_tr remote sessions -L 'shared socket' > "$CASE/out"
@@ -541,6 +642,7 @@ test_all_socket() {
     assert_args "$MOCK_LOG/tmux.box" -vLsocket -S '/tmp/custom socket' -- list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
 }
 test_parallel() {
+    write_ssh_hosts barrier-a barrier-b
     run_tr remote register barrier-a barrier-b > /dev/null
     export TR_HOSTS='barrier-a barrier-b' MOCK_BARRIER=1
     write_row barrier-a 'first:1:0'
@@ -550,6 +652,7 @@ test_parallel() {
     assert_contains "$CASE/out" $'barrier-b\tsecond'
 }
 selector_fixture() {
+    write_ssh_hosts box
     run_tr remote register box > /dev/null
     export TR_HOSTS=box MOCK_EXPECT_CLEAN=1
     SESSION="  odd ' \$;[] name  "
@@ -635,7 +738,7 @@ test_install() {
     assert_contains "$CASE/out" 'Usage: tm '
     assert_contains "$CASE/out" 'tm remote register host'
     assert_contains "$CASE/out" 'tm remote candidates'
-    printf 'Host configured\n' > "$HOME/.ssh/config"
+    write_ssh_hosts configured custom-host registered
     "$CASE/prefix space/bin/tm" remote candidates > "$CASE/out"
     assert_contains "$CASE/out" 'configured'
     "$CASE/prefix space/bin/tm" remote register custom-host > "$CASE/out"
@@ -675,7 +778,7 @@ test_zsh_completion() {
         printf 'SKIP Zsh completion: zsh is not installed\n'
         return
     fi
-    printf 'Host configured second\n' > "$HOME/.ssh/config"
+    write_ssh_hosts configured second registered user@2001:db8::1
     run_tr remote register registered user@2001:db8::1 > /dev/null
     touch "$CASE/canary-file" "$TMPDIR/socket-file"
     export TR_HOSTS=
@@ -735,7 +838,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tr-tests.XXXXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 export WORK TEST_BASH ORIGINAL_PATH REAL_TMUX
-tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_exec_names remote_list candidates_empty candidates_aliases candidates_includes candidates_errors register register_concurrent register_invalid register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install zsh_completion real_tmux'
+tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_exec_names remote_list candidates_empty candidates_aliases candidates_includes candidates_errors register register_concurrent register_invalid register_candidates register_candidates_empty register_candidates_includes register_candidates_errors register_legacy_hosts register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install zsh_completion real_tmux'
 passed=0
 failed=0
 for test in $tests; do
