@@ -8,6 +8,8 @@ HOSTS_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/tmuxer/hosts
 SCAN_PIDS=()
 SCAN_DIR=
 LOCAL_HOST='[local]'
+HOSTS_LOCK=
+HOSTS_TEMP=
 
 usage() {
     printf '%s\n' \
@@ -20,6 +22,7 @@ usage() {
         "  $PROGRAM remote list             List registered remote hosts without connecting" \
         "  $PROGRAM remote candidates       List SSH aliases available for registration" \
         "  $PROGRAM remote register host [host ...]  Add SSH config aliases to the allow list" \
+        "  $PROGRAM remote delete host [host ...]  Remove hosts from the allow list" \
         "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
         "  $PROGRAM remote sessions         List local and registered remote sessions" \
         "  $PROGRAM remote help             Show remote command help" \
@@ -34,6 +37,7 @@ remote_usage() {
         "  $PROGRAM remote list             List every registered host, one per line" \
         "  $PROGRAM remote candidates       List SSH aliases available for registration" \
         "  $PROGRAM remote register host [host ...]  Add SSH config aliases to the allow list" \
+        "  $PROGRAM remote delete host [host ...]  Remove hosts from the allow list" \
         "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
         "  $PROGRAM remote sessions [tmux global options...]  List local and remote sessions" \
         "  $PROGRAM remote help             Show help" \
@@ -49,6 +53,8 @@ cleanup() {
     for pid in "${SCAN_PIDS[@]}"; do wait "$pid" 2>/dev/null || :; done
     SCAN_PIDS=()
     if [ -n "$SCAN_DIR" ]; then rm -rf -- "$SCAN_DIR"; SCAN_DIR=; fi
+    if [ -n "$HOSTS_TEMP" ]; then rm -f -- "$HOSTS_TEMP"; HOSTS_TEMP=; fi
+    if [ -n "$HOSTS_LOCK" ]; then rmdir -- "$HOSTS_LOCK" 2>/dev/null || :; HOSTS_LOCK=; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -105,6 +111,18 @@ load_registered_hosts() {
     done < "$HOSTS_FILE" || fail "cannot read allow list: $HOSTS_FILE"
 }
 
+lock_hosts_file() {
+    local directory=${HOSTS_FILE%/*} lock=$HOSTS_FILE.lock attempts=0
+    (umask 077; mkdir -p -- "$directory") || fail "cannot write allow list: $HOSTS_FILE"
+    # Serialize register/delete so replacing the file cannot lose an append.
+    while ! (umask 077; mkdir -- "$lock") 2>/dev/null; do
+        attempts=$((attempts + 1))
+        [ "$attempts" -lt 100 ] || fail "timed out locking allow list: $HOSTS_FILE"
+        sleep 0.05
+    done
+    HOSTS_LOCK=$lock
+}
+
 register_hosts() {
     local host candidate candidates found directory last_char=
     local -a new_hosts
@@ -120,6 +138,7 @@ register_hosts() {
         done <<< "$candidates"
         [ "$found" = 1 ] || fail "host is not an SSH config candidate: $host (run: $PROGRAM remote candidates)"
     done
+    lock_hosts_file
     load_registered_hosts
     for host in "$@"; do
         if ! host_is_registered "$host"; then
@@ -132,8 +151,8 @@ register_hosts() {
         if [ -f "$HOSTS_FILE" ]; then
             last_char=$(tail -c 1 -- "$HOSTS_FILE") || fail "cannot read allow list: $HOSTS_FILE"
         fi
-        # Append instead of replacing the file so concurrent registrations cannot
-        # overwrite each other. Preserve a manually edited final unterminated line.
+        # Append without rewriting comments or existing entries. Preserve a
+        # manually edited final unterminated line.
         (
             umask 077
             mkdir -p -- "$directory" || exit 1
@@ -142,6 +161,43 @@ register_hosts() {
         ) || fail "cannot write allow list: $HOSTS_FILE"
     fi
     printf 'Registered: %s\n' "$@"
+}
+
+delete_hosts() {
+    local host line remove target link depth=0
+    [ "$#" -gt 0 ] || fail 'remote delete requires at least one host'
+    for host in "$@"; do validate_host "$host"; done
+    if [ ! -e "$HOSTS_FILE" ] && [ ! -L "$HOSTS_FILE" ]; then
+        fail "host is not registered: $1 (run: $PROGRAM remote list)"
+    fi
+    lock_hosts_file
+    load_registered_hosts
+    for host in "$@"; do
+        host_is_registered "$host" || fail "host is not registered: $host (run: $PROGRAM remote list)"
+    done
+
+    # Replace a symlink's target, preserving the link used for configuration.
+    target=$HOSTS_FILE
+    while [ -L "$target" ]; do
+        depth=$((depth + 1))
+        [ "$depth" -le 40 ] || fail "too many allow-list symlinks: $HOSTS_FILE"
+        link=$(readlink "$target") || fail "cannot read allow list: $HOSTS_FILE"
+        case "$link" in /*) target=$link ;; *) target=${target%/*}/$link ;; esac
+    done
+    HOSTS_TEMP=$(mktemp "${target%/*}/.tmuxer-hosts.XXXXXXXX") || fail "cannot write allow list: $HOSTS_FILE"
+    # Preserve comments, blank lines, and the order of every retained entry.
+    (
+        while IFS= read -r line || [ -n "$line" ]; do
+            remove=0
+            for host in "$@"; do
+                if [ "$line" = "$host" ]; then remove=1; break; fi
+            done
+            if [ "$remove" = 0 ]; then printf '%s\n' "$line" || exit 1; fi
+        done < "$HOSTS_FILE"
+    ) > "$HOSTS_TEMP" || fail "cannot write allow list: $HOSTS_FILE"
+    mv -f -- "$HOSTS_TEMP" "$target" || fail "cannot write allow list: $HOSTS_FILE"
+    HOSTS_TEMP=
+    printf 'Deleted: %s\n' "$@"
 }
 
 list_hosts() {
@@ -361,6 +417,7 @@ case "$OPERATION" in
         [ "$#" -eq 0 ] || fail 'remote select does not accept arguments'
         select_session; exit $? ;;
     register) register_hosts "$@"; exit 0 ;;
+    delete) delete_hosts "$@"; exit 0 ;;
     list)
         [ "$#" -eq 0 ] || fail 'remote list does not accept arguments'
         list_hosts; exit 0 ;;

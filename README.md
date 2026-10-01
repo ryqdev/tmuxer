@@ -12,6 +12,7 @@ tx operations use named subcommands and positional arguments. tmux's own argumen
 | `tx remote list` | List all registered remote servers without connecting |
 | `tx remote candidates` | List SSH aliases from your SSH config that can be registered |
 | `tx remote register <host> [host ...]` | Add configured SSH aliases to the persistent allow list |
+| `tx remote delete <host> [host ...]` | Remove registered servers from the allow list |
 | `tx remote exec <host> [tmux arguments...]` | Run tmux on a registered SSH host |
 | `tx remote sessions [tmux global options...]` | List sessions across this machine and registered SSH hosts |
 | `tx remote help` | Show remote command help |
@@ -21,7 +22,7 @@ Bare `tx remote` is also supported as shorthand for `tx remote select`. Except f
 
 ## Installation
 
-Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx remote select` interactive session selector. Host registration and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
+Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx remote select` interactive session selector. Host registration, deletion, and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
 
 ```bash
 git clone https://github.com/ryqdev/tmuxer.git
@@ -51,7 +52,7 @@ source "$HOME/.local/share/tmuxer/tx.zsh" tx
 
 Run the same `source` command in your current shell to enable it immediately. For a custom `PREFIX` or `NAME`, use the exact command printed by the installer.
 
-Tab completes `tx remote can` to `tx remote candidates`, all other remote subcommands, SSH aliases after `remote register`, and registered hosts after `remote exec`. Host completion reads local configuration without connecting over SSH. Local tmux commands reuse Zsh's tmux completion.
+Tab completes `tx remote can` to `tx remote candidates`, all other remote subcommands, SSH aliases after `remote register`, and registered hosts after `remote exec` and `remote delete`. Host completion reads local configuration without connecting over SSH. Local tmux commands reuse Zsh's tmux completion.
 
 ### Upgrading from tr
 
@@ -167,4 +168,13 @@ TR_HOSTS="dev staging" tx remote sessions
 
 Discovery uses noninteractive SSH and skips hosts that cannot connect, require a password prompt, or have no sessions. The interactive selector shows host, session name, window count, and attached/detached state with a pane preview. Selecting a local session switches clients if already inside tmux, or attaches otherwise; selecting a remote session attaches over SSH.
 
-To remove a server, delete its line from the allow-list file. The file contains one destination per line; blank lines and lines starting with `#` are ignored.
+Remove one or more registered servers with:
+
+```bash
+tx remote delete dev staging
+tx remote list
+```
+
+`tx remote delete` removes every occurrence of the exact destinations from the allow list, including legacy entries absent from SSH configuration. All names must be registered and syntactically valid; if any name is invalid or unknown, the entire deletion fails without changing the file. Deletion reads only the allow list and is independent of `TR_HOSTS`. Comments, blank lines, and the order of retained entries are preserved. The file is replaced atomically, with register/delete operations serialized to preserve concurrent changes.
+
+You can also edit the allow-list file directly. It contains one destination per line; blank lines and lines starting with `#` are ignored.

@@ -27,6 +27,7 @@ _tx() {
             'list:List registered remote hosts'
             'candidates:List SSH aliases available for registration'
             'register:Register remote hosts'
+            'delete:Remove hosts from the allow list'
             'exec:Run tmux on a registered host'
             'sessions:List local and remote sessions'
             'help:Show remote command help'
@@ -40,8 +41,8 @@ _tx() {
             hosts=("${(@f)$(command "$words[1]" remote candidates 2>/dev/null)}")
             [[ -n $hosts[1] ]] || return 1
             _wanted hosts expl 'SSH alias' compadd -a hosts ;;
-        exec)
-            if (( CURRENT == 4 )); then
+        exec|delete)
+            if [[ $words[3] == delete ]] || (( CURRENT == 4 )); then
                 hosts=("${(@f)$(command "$words[1]" remote list 2>/dev/null)}")
                 [[ -n $hosts[1] ]] || return 1
                 _wanted hosts expl 'registered host' compadd -a hosts
