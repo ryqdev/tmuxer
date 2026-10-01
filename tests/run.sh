@@ -3,7 +3,7 @@
 set -eu
 
 TEST_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-TR=$TEST_ROOT/tr
+TR=$TEST_ROOT/tx
 TEST_BASH=${TEST_BASH:-$BASH}
 ORIGINAL_PATH=${ORIGINAL_PATH:-$PATH}
 REAL_TMUX=${REAL_TMUX:-$(command -v tmux || :)}
@@ -264,16 +264,30 @@ test_cancel_empty_missing_fzf() {
 }
 test_script_path_spaces() {
     mkdir "$CASE/a directory's"
-    cp "$TR" "$CASE/a directory's/tr"
-    TR="$CASE/a directory's/tr"
+    cp "$TR" "$CASE/a directory's/tx"
+    TR="$CASE/a directory's/tx"
     test_preview_remote
 }
 test_install() {
-    NAME=tx PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
-    [ -x "$CASE/prefix space/bin/tx" ]
-    cmp "$TR" "$CASE/prefix space/bin/tx"
+    NAME=tm PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
+    [ -x "$CASE/prefix space/bin/tm" ]
+    cmp "$TR" "$CASE/prefix space/bin/tm"
+    "$CASE/prefix space/bin/tm" --help > "$CASE/out"
+    assert_contains "$CASE/out" 'Usage: tm '
     "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
-    [ -x "$HOME/.local/bin/tr" ]
+    [ -x "$HOME/.local/bin/tx" ]
+    [ ! -e "$HOME/.local/bin/tr" ]
+    cmp "$TR" "$HOME/.local/bin/tx"
+    PATH="$HOME/.local/bin:$CASE/bin:/usr/bin:/bin"
+    export PATH
+    tx --help > "$CASE/out"
+    assert_contains "$CASE/out" 'Usage: tx '
+    assert_status 2 tx -H
+    assert_contains "$CASE/err" 'tx: -H requires a host argument'
+    tx ls
+    assert_args "$MOCK_LOG/tmux.local" ls
+    # NVM uses this conversion during shell startup. It must reach system tr.
+    [ "$(printf t | command tr t '\t')" = $'\t' ]
     assert_status 2 env NAME='../bad' PREFIX="$CASE/prefix" "$TEST_BASH" "$TEST_ROOT/install.sh"
 }
 test_real_tmux() {

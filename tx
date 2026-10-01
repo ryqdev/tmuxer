@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bash 3.2 compatible; remote commands are quoted for a POSIX shell.
 
+PROGRAM=${0##*/}
 HOSTS=()
 CONFIG_SEEN=()
 CONFIG_WORDS=()
@@ -10,16 +11,16 @@ LOCAL_HOST='[local]'
 
 usage() {
     printf '%s\n' \
-        'Usage: tr [-H host] [tmux arguments...]' \
-        '  tr                 Select a local or remote session interactively (requires fzf)' \
-        '  tr ls              Equivalent to tmux ls' \
-        '  tr -H server ls    Run tmux ls on server' \
-        '  tr -H all ls       List sessions on this machine and all SSH hosts' \
-        '  tr --help          Show help' \
+        "Usage: $PROGRAM [-H host] [tmux arguments...]" \
+        "  $PROGRAM                 Select a local or remote session interactively (requires fzf)" \
+        "  $PROGRAM ls              Equivalent to tmux ls" \
+        "  $PROGRAM -H server ls    Run tmux ls on server" \
+        "  $PROGRAM -H all ls       List sessions on this machine and all SSH hosts" \
+        "  $PROGRAM --help          Show help" \
         'TR_HOSTS="a b c" overrides hosts from ~/.ssh/config (empty means local only).'
 }
 
-fail() { printf 'tr: %s\n' "$*" >&2; exit 2; }
+fail() { printf '%s: %s\n' "$PROGRAM" "$*" >&2; exit 2; }
 
 cleanup() {
     local pid
@@ -200,10 +201,10 @@ preview() {
 
 select_session() {
     local selection host session windows state script_path quoted_script status
-    command -v fzf >/dev/null 2>&1 || fail 'interactive selection requires fzf; you can still run commands such as tr ls'
+    command -v fzf >/dev/null 2>&1 || fail "interactive selection requires fzf; you can still run commands such as $PROGRAM ls"
     collect_sessions
     if [ ! -s "$SCAN_DIR/sessions" ]; then
-        printf 'tr: no available sessions found\n' >&2
+        printf '%s: no available sessions found\n' "$PROGRAM" >&2
         return 1
     fi
     script_path=$0
