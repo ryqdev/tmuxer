@@ -41,6 +41,18 @@ NAME=tm ./install.sh
 
 Use your chosen name in place of `tx` in the examples below. Avoid `NAME=tr`: it shadows the system text-processing command used by shell scripts, including NVM.
 
+### Zsh completion
+
+The installer also copies the Zsh completion script to `$PREFIX/share/tmuxer/tx.zsh`. Load it in `~/.zshrc` after your shell framework initializes completion (or after `autoload -Uz compinit; compinit`):
+
+```zsh
+source "$HOME/.local/share/tmuxer/tx.zsh" tx
+```
+
+Run the same `source` command in your current shell to enable it immediately. For a custom `PREFIX` or `NAME`, use the exact command printed by the installer.
+
+Tab completes `tx remote can` to `tx remote candidates`, all other remote subcommands, SSH aliases after `remote register`, and registered hosts after `remote exec`. Host completion reads local configuration without connecting over SSH. Local tmux commands reuse Zsh's tmux completion.
+
 ### Upgrading from tr
 
 Older versions installed the wrapper as `tr`, which can cause `unknown command: t` during shell startup. If `~/.local/bin/tr` is the old tmuxer wrapper, move it aside before installing `tx`:

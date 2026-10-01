@@ -630,6 +630,7 @@ test_install() {
     NAME=tm PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
     [ -x "$CASE/prefix space/bin/tm" ]
     cmp "$TR" "$CASE/prefix space/bin/tm"
+    cmp "$TEST_ROOT/completions/tx.zsh" "$CASE/prefix space/share/tmuxer/tx.zsh"
     "$CASE/prefix space/bin/tm" help > "$CASE/out"
     assert_contains "$CASE/out" 'Usage: tm '
     assert_contains "$CASE/out" 'tm remote register host'
@@ -648,6 +649,7 @@ test_install() {
     [ -x "$HOME/.local/bin/tx" ]
     [ ! -e "$HOME/.local/bin/tr" ]
     cmp "$TR" "$HOME/.local/bin/tx"
+    cmp "$TEST_ROOT/completions/tx.zsh" "$HOME/.local/share/tmuxer/tx.zsh"
     PATH="$HOME/.local/bin:$CASE/bin:/usr/bin:/bin"
     export PATH
     tx help > "$CASE/out"
@@ -667,6 +669,23 @@ test_install() {
     # NVM uses this conversion during shell startup. It must reach system tr.
     [ "$(printf t | command tr t '\t')" = $'\t' ]
     assert_status 2 env NAME='../bad' PREFIX="$CASE/prefix" "$TEST_BASH" "$TEST_ROOT/install.sh"
+}
+test_zsh_completion() {
+    if ! command -v zsh >/dev/null 2>&1; then
+        printf 'SKIP Zsh completion: zsh is not installed\n'
+        return
+    fi
+    printf 'Host configured second\n' > "$HOME/.ssh/config"
+    run_tr remote register registered user@2001:db8::1 > /dev/null
+    touch "$CASE/canary-file" "$TMPDIR/socket-file"
+    export TR_HOSTS=
+    # Test both the default command and a custom name/prefix with spaces.
+    "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
+    PATH="$HOME/.local/bin:$PATH" zsh -f "$TEST_ROOT/tests/completion.zsh" "$HOME/.local/share/tmuxer/tx.zsh" tx
+    NAME=tm PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
+    PATH="$CASE/prefix space/bin:$PATH" zsh -f "$TEST_ROOT/tests/completion.zsh" "$CASE/prefix space/share/tmuxer/tx.zsh" tm
+    assert_no_ssh
+    [ ! -e "$MOCK_LOG/fzf" ]
 }
 test_real_tmux() {
     [ -n "$REAL_TMUX" ] || fail 'real tmux is required'
@@ -716,7 +735,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tr-tests.XXXXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 export WORK TEST_BASH ORIGINAL_PATH REAL_TMUX
-tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_exec_names remote_list candidates_empty candidates_aliases candidates_includes candidates_errors register register_concurrent register_invalid register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install real_tmux'
+tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_exec_names remote_list candidates_empty candidates_aliases candidates_includes candidates_errors register register_concurrent register_invalid register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install zsh_completion real_tmux'
 passed=0
 failed=0
 for test in $tests; do
