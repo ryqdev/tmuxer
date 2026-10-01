@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+original=("$@")
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -t|-T) shift ;;
+        -o) shift 2 ;;
+        --) shift; break ;;
+        *) break ;;
+    esac
+done
+host=$1
+shift
+printf '%q\n' "${original[@]}" >> "$MOCK_LOG/ssh.$host"
+case "$host" in dead|password) exit 255 ;; esac
+if [ "${MOCK_BARRIER-}" = 1 ]; then
+    case "$host" in
+        barrier-a) other=barrier-b ;;
+        barrier-b) other=barrier-a ;;
+        *) other= ;;
+    esac
+    if [ -n "$other" ]; then
+        : > "$MOCK_LOG/ready.$host"
+        for ((i=0; i<100; i++)); do
+            [ ! -f "$MOCK_LOG/ready.$other" ] || break
+            sleep 0.02
+        done
+        [ -f "$MOCK_LOG/ready.$other" ] || exit 255
+    fi
+fi
+[ "$#" -eq 1 ] || exit 98
+MOCK_HOST=$host /bin/sh -c "$1"

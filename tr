@@ -191,9 +191,9 @@ preview() {
     IFS=$'\t' read -r host session windows state <<< "$1"
     [ -n "$host" ] && [ -n "$session" ] || return 0
     if [ "$host" = "$LOCAL_HOST" ]; then
-        tmux capture-pane -p -t "=$session" -S -100 2>/dev/null
+        tmux capture-pane -p -t "=$session:" -S -100 2>/dev/null
     else
-        quote_command tmux capture-pane -p -t "=$session" -S -100
+        quote_command tmux capture-pane -p -t "=$session:" -S -100
         ssh -T -o BatchMode=yes -o ConnectTimeout=3 -o ConnectionAttempts=1 -- "$host" "$REMOTE_COMMAND" 2>/dev/null
     fi
 }

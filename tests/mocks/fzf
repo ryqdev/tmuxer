@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+printf '%q\n' "$@" > "$MOCK_LOG/fzf"
+preview=
+while [ "$#" -gt 0 ]; do
+    case "$1" in --preview) preview=$2; shift ;; esac
+    shift
+done
+selection=
+while IFS= read -r row || [ -n "$row" ]; do
+    printf '%s\n' "$row" >> "$MOCK_LOG/fzf-input"
+    [ "$row" != "${MOCK_PICK-}" ] || selection=$row
+done
+[ "${MOCK_CANCEL-}" != 1 ] || exit 130
+[ -n "$selection" ] || exit 1
+if [ "${MOCK_RUN_PREVIEW-}" = 1 ]; then
+    quoted=${selection//\'/\'\\\'\'}
+    quoted="'$quoted'"
+    preview=${preview/\{\}/$quoted}
+    /bin/sh -c "$preview" > "$MOCK_LOG/preview-output" || exit $?
+fi
+printf '%s\n' "$selection"

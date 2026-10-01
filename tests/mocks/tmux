@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+printf '%q\n' "$@" >> "$MOCK_LOG/tmux.${MOCK_HOST:-local}"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -L|-S|-f|-c|-T) shift; [ "$#" -eq 0 ] || shift ;;
+        --) shift; break ;;
+        -*) shift ;;
+        *) break ;;
+    esac
+done
+case "${1-}" in
+    ls|list-sessions)
+        rows=$MOCK_ROWS/${MOCK_HOST:-local}
+        if [ -f "$rows" ]; then
+            while IFS= read -r row || [ -n "$row" ]; do printf '%s\n' "$row"; done < "$rows"
+        fi ;;
+    capture-pane) printf '%s\n' 'mock pane contents' ;;
+    attach|switch-client)
+        if [ "${MOCK_EXPECT_CLEAN-}" = 1 ]; then
+            for directory in "$TMPDIR"/tr.*; do
+                [ ! -d "$directory" ] || { printf 'temporary directory leaked before exec\n' >&2; exit 97; }
+            done
+        fi ;;
+esac
+exit "${MOCK_TMUX_STATUS:-0}"
