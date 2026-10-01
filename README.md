@@ -10,6 +10,7 @@ tx operations use named subcommands and positional arguments. tmux's own argumen
 | `tx <command> ...` | Run a tmux command locally |
 | `tx remote select` | Select a local or remote session with a pane preview (requires fzf) |
 | `tx remote list` | List all registered remote servers without connecting |
+| `tx remote candidates` | List SSH aliases from your SSH config that can be registered |
 | `tx remote register <host> [host ...]` | Add remote servers to the persistent allow list |
 | `tx remote exec <host> [tmux arguments...]` | Run tmux on a registered SSH host |
 | `tx remote sessions [tmux global options...]` | List sessions across this machine and registered SSH hosts |
@@ -20,7 +21,7 @@ Bare `tx remote` is also supported as shorthand for `tx remote select`. Except f
 
 ## Installation
 
-Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx remote select` interactive session selector. Host registration and listing do not require tmux, SSH, or fzf.
+Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx remote select` interactive session selector. Host registration and listing do not require tmux, SSH, or fzf. Listing SSH candidates additionally uses awk.
 
 ```bash
 git clone https://github.com/ryqdev/tmuxer.git
@@ -99,6 +100,19 @@ The host is the positional argument immediately after `exec`. Everything after t
 `tx remote sessions` performs session discovery directly. It accepts tmux global options such as `-L` and `-S` to choose a socket, without a tmux subcommand or subcommand arguments. It does not execute arbitrary commands across hosts.
 
 ## Hosts
+
+Find server aliases in your SSH configuration before registering them:
+
+```bash
+tx remote candidates
+# dev
+# staging
+tx remote register dev staging
+```
+
+`tx remote candidates` reads concrete `Host` aliases from `~/.ssh/config`, including nested `Include` files. It prints each alias once, in configuration order, with one alias per line. Wildcard and negated patterns, the reserved name `all`, and names rejected by `remote register` are skipped. It lists aliases whether or not they are already registered, independently of `TR_HOSTS` and the allow-list file. A missing or empty SSH config produces no output.
+
+Include paths support absolute paths, paths relative to `~/.ssh`, `~/` paths, double quotes, and globs in lexical order. Repeated files and include cycles are skipped. Dynamic paths using SSH tokens, environment variables, or other users' `~user` paths are not expanded. This is a list of configured candidates: it does not evaluate `Host`/`Match` conditions, execute `Match exec` commands, connect to servers, or change the allow list. Use `tx remote register` to add the aliases you choose.
 
 Register remote servers before using them:
 

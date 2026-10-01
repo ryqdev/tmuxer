@@ -170,6 +170,8 @@ test_errors_help() {
     assert_contains "$CASE/err" 'tmux option -L requires a value'
     assert_status 2 run_tr remote list extra
     assert_contains "$CASE/err" 'remote list does not accept arguments'
+    assert_status 2 run_tr remote candidates extra
+    assert_contains "$CASE/err" 'remote candidates does not accept arguments'
     assert_status 2 run_tr remote select extra
     assert_status 2 run_tr remote help extra
     assert_status 2 run_tr help extra
@@ -183,19 +185,21 @@ test_errors_help() {
     assert_status 0 run_tr help
     assert_contains "$CASE/out" 'tx remote register host'
     assert_contains "$CASE/out" 'tx remote list'
+    assert_contains "$CASE/out" 'tx remote candidates'
     assert_contains "$CASE/out" 'tx remote exec host'
     assert_contains "$CASE/out" 'tx remote sessions'
     assert_contains "$CASE/out" 'tx remote select'
     assert_status 0 run_tr remote help
     assert_contains "$CASE/out" 'TR_HOSTS'
+    assert_contains "$CASE/out" 'tx remote candidates'
     [ ! -e "$MOCK_LOG/tmux.local" ]
     [ ! -e "$MOCK_LOG/ssh.all" ]
 }
 test_remote_exec_names() {
     # Hostnames may be identical to subcommands; the exec position disambiguates.
-    run_tr remote register list exec help sessions select register > /dev/null
+    run_tr remote register list candidates exec help sessions select register > /dev/null
     local host
-    for host in list exec help sessions select register; do
+    for host in list candidates exec help sessions select register; do
         clear_logs
         run_tr remote exec "$host" ls
         assert_args "$MOCK_LOG/tmux.$host" ls
@@ -221,6 +225,112 @@ test_remote_list() {
     : > "$HOME/.config/tmuxer/hosts"
     run_tr remote list > "$CASE/out"
     [ ! -s "$CASE/out" ]
+}
+test_candidates_empty() {
+    run_tr remote candidates > "$CASE/out"
+    [ ! -s "$CASE/out" ]
+    [ ! -e "$HOME/.ssh/config" ]
+    : > "$HOME/.ssh/config"
+    run_tr remote candidates > "$CASE/out"
+    [ ! -s "$CASE/out" ]
+    printf '# Host hidden\nHost * !excluded\nMatch exec "touch SHOULD_NOT_RUN"\n' > "$HOME/.ssh/config"
+    run_tr remote candidates > "$CASE/out"
+    [ ! -s "$CASE/out" ]
+    [ ! -e "$CASE/SHOULD_NOT_RUN" ]
+    [ ! -e "$HOME/.config/tmuxer/hosts" ]
+    assert_no_ssh
+    [ ! -e "$MOCK_LOG/tmux.local" ]
+    [ ! -e "$MOCK_LOG/fzf" ]
+}
+test_candidates_aliases() {
+    cat > "$HOME/.ssh/config" <<'CONFIG'
+# Host commented
+  hOsT = "dev" staging "qa" # ignored comment
+    HostName real.example.com
+Host dev user@10.0.0.1 2001:db8::1
+Host * wildcard? !negative [pattern] -option all "bad host"
+Host "$(touch SHOULD_NOT_RUN)" "back\"quote"
+CONFIG
+    printf '\tHOST=last\r\nHost final' >> "$HOME/.ssh/config"
+    export TR_HOSTS=
+    export XDG_CONFIG_HOME="$CASE/unrelated config"
+    mkdir -p "$XDG_CONFIG_HOME/tmuxer"
+    printf 'invalid host\n' > "$XDG_CONFIG_HOME/tmuxer/hosts"
+    # Candidate listing is offline and independent of the registered hosts.
+    rm "$CASE/bin/tmux" "$CASE/bin/ssh" "$CASE/bin/fzf"
+    minimal_path
+    run_tr remote candidates > "$CASE/out"
+    printf '%s\n' dev staging qa user@10.0.0.1 2001:db8::1 last final > "$CASE/expected"
+    /usr/bin/diff -u "$CASE/expected" "$CASE/out"
+    printf 'invalid host\n' > "$CASE/expected"
+    /usr/bin/diff -u "$CASE/expected" "$XDG_CONFIG_HOME/tmuxer/hosts"
+    [ ! -e "$CASE/SHOULD_NOT_RUN" ]
+    assert_no_ssh
+    [ ! -e "$MOCK_LOG/tmux.local" ]
+    [ ! -e "$MOCK_LOG/fzf" ]
+    # Every emitted alias can be passed directly to register.
+    rm "$XDG_CONFIG_HOME/tmuxer/hosts"
+    local host
+    while IFS= read -r host; do run_tr remote register "$host" > /dev/null; done < "$CASE/out"
+    run_tr remote list > "$CASE/registered"
+    /usr/bin/diff -u "$CASE/out" "$CASE/registered"
+}
+test_candidates_includes() {
+    mkdir -p "$HOME/.ssh/config.d" "$HOME/.ssh/space directory"
+    cat > "$HOME/.ssh/config" <<'CONFIG'
+Host first
+Include config.d/*.conf "space directory/hosts #1" ~/extra.conf missing*.conf
+Include config.d/a.conf
+Host last first
+CONFIG
+    cat > "$HOME/.ssh/config.d/a.conf" <<'CONFIG'
+Host alpha
+Include nested.conf config.d/cycle
+Match exec "touch SHOULD_NOT_RUN"
+Include conditional.conf
+CONFIG
+    printf 'Host nested\n' > "$HOME/.ssh/nested.conf"
+    printf 'Host conditional\n' > "$HOME/.ssh/conditional.conf"
+    printf 'Host zeta\n' > "$HOME/.ssh/config.d/z.conf"
+    printf 'Host spaced\n' > "$HOME/.ssh/space directory/hosts #1"
+    printf 'Host extra\n' > "$HOME/extra.conf"
+    ln -s ../config "$HOME/.ssh/config.d/cycle"
+    printf 'Host absolute\nInclude config\n' > "$CASE/absolute config"
+    printf 'Include="%s"\n' "$CASE/absolute config" >> "$HOME/.ssh/config"
+    run_tr remote candidates > "$CASE/out"
+    printf '%s\n' first alpha nested conditional zeta spaced extra last absolute > "$CASE/expected"
+    diff -u "$CASE/expected" "$CASE/out"
+    [ ! -e "$CASE/SHOULD_NOT_RUN" ]
+    [ ! -e "$HOME/.config/tmuxer/hosts" ]
+    assert_no_ssh
+    assert_clean
+}
+test_candidates_errors() {
+    mkdir "$HOME/.ssh/config"
+    assert_status 2 run_tr remote candidates
+    assert_contains "$CASE/err" 'cannot read SSH config'
+    rmdir "$HOME/.ssh/config"
+    printf 'Host before\nHost "unfinished\n' > "$HOME/.ssh/config"
+    assert_status 2 run_tr remote candidates
+    assert_contains "$CASE/err" 'cannot parse SSH config'
+    [ ! -s "$CASE/out" ]
+    mkdir "$HOME/.ssh/directory"
+    printf 'Host before\nInclude directory\n' > "$HOME/.ssh/config"
+    assert_status 2 run_tr remote candidates
+    assert_contains "$CASE/err" 'cannot read SSH config'
+    [ ! -s "$CASE/out" ]
+    # Bound acyclic nesting too, so a pathological config fails clearly.
+    local i
+    printf 'Include depth0\n' > "$HOME/.ssh/config"
+    for ((i=0; i<17; i++)); do
+        printf 'Include depth%d\n' "$((i + 1))" > "$HOME/.ssh/depth$i"
+    done
+    printf 'Host too-deep\n' > "$HOME/.ssh/depth17"
+    assert_status 2 run_tr remote candidates
+    assert_contains "$CASE/err" 'too deeply nested'
+    [ ! -s "$CASE/out" ]
+    assert_no_ssh
+    [ ! -e "$HOME/.config/tmuxer/hosts" ]
 }
 test_register() {
     local mode
@@ -523,6 +633,10 @@ test_install() {
     "$CASE/prefix space/bin/tm" help > "$CASE/out"
     assert_contains "$CASE/out" 'Usage: tm '
     assert_contains "$CASE/out" 'tm remote register host'
+    assert_contains "$CASE/out" 'tm remote candidates'
+    printf 'Host configured\n' > "$HOME/.ssh/config"
+    "$CASE/prefix space/bin/tm" remote candidates > "$CASE/out"
+    assert_contains "$CASE/out" 'configured'
     "$CASE/prefix space/bin/tm" remote register custom-host > "$CASE/out"
     "$CASE/prefix space/bin/tm" remote list > "$CASE/out"
     assert_contains "$CASE/out" 'custom-host'
@@ -602,7 +716,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tr-tests.XXXXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 export WORK TEST_BASH ORIGINAL_PATH REAL_TMUX
-tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_exec_names remote_list register register_concurrent register_invalid register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install real_tmux'
+tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_exec_names remote_list candidates_empty candidates_aliases candidates_includes candidates_errors register register_concurrent register_invalid register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install real_tmux'
 passed=0
 failed=0
 for test in $tests; do
