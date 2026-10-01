@@ -45,10 +45,10 @@ jobs:
           fi
 
       - name: Check Bash syntax
-        run: /bin/bash -n tr install.sh tests/run.sh tests/mocks/*
+        run: /bin/bash -n tx install.sh tests/run.sh tests/mocks/*
 
       - name: Check ShellCheck errors
-        run: shellcheck --severity=error tr install.sh tests/run.sh tests/mocks/*
+        run: shellcheck --severity=error tx install.sh tests/run.sh tests/mocks/*
 
       - name: Run tests
         run: |
