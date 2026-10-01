@@ -47,7 +47,7 @@ check_completion() {
 }
 
 check_completion "$command_name rem" "$command_name remote"
-for subcommand in candidates select list register exec sessions help; do
+for subcommand in candidates select list register delete exec sessions help; do
     check_completion "$command_name remote ${subcommand[1,3]}" "$command_name remote $subcommand"
 done
 check_completion "$command_name remote register conf" "$command_name remote register configured"
@@ -55,6 +55,9 @@ check_completion "$command_name remote register configured sec" "$command_name r
 check_completion "$command_name remote exec reg" "$command_name remote exec registered"
 check_completion "$command_name remote exec user@" "$command_name remote exec user@2001:db8::1"
 check_completion "$command_name remote exec conf" "$command_name remote exec conf"
+check_completion "$command_name remote delete reg" "$command_name remote delete registered"
+check_completion "$command_name remote delete registered user@" "$command_name remote delete registered user@2001:db8::1"
+check_completion "$command_name remote delete conf" "$command_name remote delete conf"
 check_completion "$command_name remote exec reg ignored" "$command_name remote exec reg ignored"
 check_completion "$command_name new-s" "$command_name new-session"
 check_completion "$command_name -L socket new-s" "$command_name -L socket new-session"
