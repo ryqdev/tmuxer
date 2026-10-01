@@ -1,0 +1,57 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      TEST_BASH: /bin/bash
+      TERM: xterm-256color
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install test dependencies
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y tmux shellcheck
+          else
+            brew install tmux shellcheck
+          fi
+
+      - name: Check Bash syntax
+        run: /bin/bash -n tr install.sh tests/run.sh tests/mocks/*
+
+      - name: Check ShellCheck errors
+        run: shellcheck --severity=error tr install.sh tests/run.sh tests/mocks/*
+
+      - name: Run tests
+        run: |
+          /bin/bash --version
+          tmux -V
+          /bin/bash tests/run.sh
