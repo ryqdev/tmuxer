@@ -11,7 +11,7 @@ tx operations use named subcommands and positional arguments. tmux's own argumen
 | `tx remote select` | Select a local or remote session with a pane preview (requires fzf) |
 | `tx remote list` | List all registered remote servers without connecting |
 | `tx remote candidates` | List SSH aliases from your SSH config that can be registered |
-| `tx remote register <host> [host ...]` | Add remote servers to the persistent allow list |
+| `tx remote register <host> [host ...]` | Add configured SSH aliases to the persistent allow list |
 | `tx remote exec <host> [tmux arguments...]` | Run tmux on a registered SSH host |
 | `tx remote sessions [tmux global options...]` | List sessions across this machine and registered SSH hosts |
 | `tx remote help` | Show remote command help |
@@ -21,7 +21,7 @@ Bare `tx remote` is also supported as shorthand for `tx remote select`. Except f
 
 ## Installation
 
-Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx remote select` interactive session selector. Host registration and listing do not require tmux, SSH, or fzf. Listing SSH candidates additionally uses awk.
+Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx remote select` interactive session selector. Host registration and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
 
 ```bash
 git clone https://github.com/ryqdev/tmuxer.git
@@ -126,17 +126,30 @@ tx remote register dev staging
 
 Include paths support absolute paths, paths relative to `~/.ssh`, `~/` paths, double quotes, and globs in lexical order. Repeated files and include cycles are skipped. Dynamic paths using SSH tokens, environment variables, or other users' `~user` paths are not expanded. This is a list of configured candidates: it does not evaluate `Host`/`Match` conditions, execute `Match exec` commands, connect to servers, or change the allow list. Use `tx remote register` to add the aliases you choose.
 
-Register remote servers before using them:
+Register aliases listed by `tx remote candidates` before using them:
 
 ```bash
 tx remote register dev staging prod
-tx remote register user@192.0.2.10
 tx remote list
 tx remote sessions
 tx remote select
 ```
 
-`tx remote register` saves each server in `${XDG_CONFIG_HOME:-$HOME/.config}/tmuxer/hosts` (normally `~/.config/tmuxer/hosts`). It accepts SSH aliases, hostnames, IPv4/IPv6 addresses, and `user@host` destinations. Registration does not connect to the server, and registering the same server again does not add duplicates. Wildcards, whitespace, and the reserved name `all` are rejected.
+`tx remote register` saves each alias in `${XDG_CONFIG_HOME:-$HOME/.config}/tmuxer/hosts` (normally `~/.config/tmuxer/hosts`). Every input must exactly match an alias listed by `tx remote candidates`, including aliases from SSH `Include` files. A typo such as `vult` when only `vultr` is configured is rejected with a pointer to `tx remote candidates`. If any input is invalid, the entire registration fails without changing the allow list. Missing, empty, or malformed SSH configuration cannot authorize registration.
+
+For a destination such as `user@192.0.2.10`, first define an alias in `~/.ssh/config`, then register that alias:
+
+```sshconfig
+Host prod
+    HostName 192.0.2.10
+    User user
+```
+
+```bash
+tx remote register prod
+```
+
+Registration checks local configuration without connecting to the server; it does not verify reachability. Registering the same configured alias again does not add duplicates. Wildcards, whitespace, and the reserved name `all` are rejected. Existing allow-list entries remain available to `remote list`, `remote exec`, and session discovery even if they are absent from the current SSH candidates; registering them again requires a matching candidate.
 
 `tx remote list` prints every registered destination once, in registration order, with one destination per line. It does not connect to servers and is not filtered by `TR_HOSTS`. An absent or empty allow list produces no output.
 
