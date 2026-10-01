@@ -92,12 +92,15 @@ test_local_namespace() {
     clear_logs
     run_tr -L remote -- ls
     assert_args "$MOCK_LOG/tmux.local" -L remote -- ls
+    clear_logs
+    run_tr --help
+    assert_args "$MOCK_LOG/tmux.local" --help
     assert_no_ssh
 }
 test_remote_quotes() {
     run_tr remote register box > /dev/null
-    run_tr remote -H box send-keys 'python x.py --a '\''b c'\''' '' "''''" 'a"b' '$HOME; $(touch nope)' $'two\nlines' '\path' </dev/null
-    assert_args "$MOCK_LOG/tmux.box" send-keys 'python x.py --a '\''b c'\''' '' "''''" 'a"b' '$HOME; $(touch nope)' $'two\nlines' '\path'
+    run_tr remote exec box send-keys -H 'python x.py --a '\''b c'\''' '' "''''" 'a"b' '$HOME; $(touch nope)' $'two\nlines' '\path' </dev/null
+    assert_args "$MOCK_LOG/tmux.box" send-keys -H 'python x.py --a '\''b c'\''' '' "''''" 'a"b' '$HOME; $(touch nope)' $'two\nlines' '\path'
     assert_contains "$MOCK_LOG/ssh.box" '-T'
     [ ! -e "$CASE/nope" ]
 }
@@ -105,19 +108,19 @@ test_exit_status() {
     run_tr remote register box > /dev/null
     export MOCK_TMUX_STATUS=37
     assert_status 37 run_tr ls
-    assert_status 37 run_tr remote -H box ls
+    assert_status 37 run_tr remote exec box ls
 }
 test_global_options() {
     run_tr remote register box > /dev/null
     run_tr -L 'local socket' ls
     assert_args "$MOCK_LOG/tmux.local" -L 'local socket' ls
-    run_tr remote -S '/tmp/a b' -H box -f 'my config' -T 'flags' -c 'shell command' -v capture-pane -p
+    run_tr remote exec box -S '/tmp/a b' -f 'my config' -T 'flags' -c 'shell command' -v capture-pane -p
     assert_args "$MOCK_LOG/tmux.box" -S '/tmp/a b' -f 'my config' -T flags -c 'shell command' -v capture-pane -p
     clear_logs
-    run_tr remote -H box -L -H ls
+    run_tr remote exec box -L -H ls
     assert_args "$MOCK_LOG/tmux.box" -L -H ls
     clear_logs
-    run_tr remote -H box -- send-keys -H
+    run_tr remote exec box -- send-keys -H
     assert_args "$MOCK_LOG/tmux.box" -- send-keys -H
 }
 test_non_tty() {
@@ -125,10 +128,10 @@ test_non_tty() {
     local command
     for command in attach attach-session a at new new-session ls capture-pane send-keys ''; do
         clear_logs
-        if [ -n "$command" ]; then run_tr remote -H box "$command" </dev/null; else run_tr remote -H box </dev/null; fi
+        if [ -n "$command" ]; then run_tr remote exec box "$command" </dev/null; else run_tr remote exec box </dev/null; fi
         assert_contains "$MOCK_LOG/ssh.box" '-T'
     done
-    run_tr remote -H box capture-pane -p | awk '{print}' > "$CASE/piped"
+    run_tr remote exec box capture-pane -p | awk '{print}' > "$CASE/piped"
     assert_contains "$CASE/piped" 'mock pane contents'
 }
 test_tty_attach() {
@@ -136,12 +139,12 @@ test_tty_attach() {
     local command
     for command in attach attach-session a at new new-session ''; do
         clear_logs
-        if [ -n "$command" ]; then run_tty remote -H box -L 'socket space' "$command";
-        else run_tty remote -H box -S '/tmp/my socket'; fi
+        if [ -n "$command" ]; then run_tty remote exec box -L 'socket space' "$command";
+        else run_tty remote exec box -S '/tmp/my socket'; fi
         assert_contains "$MOCK_LOG/ssh.box" '-t'
     done
     clear_logs
-    run_tty remote -H box -vLsocket -S '/tmp/my socket' -f attach -T new -c a at
+    run_tty remote exec box -vLsocket -S '/tmp/my socket' -f attach -T new -c a at
     assert_contains "$MOCK_LOG/ssh.box" '-t'
 }
 test_tty_other() {
@@ -149,31 +152,54 @@ test_tty_other() {
     local command
     for command in ls capture-pane send-keys; do
         clear_logs
-        run_tty remote -H box -L attach -S new "$command"
+        run_tty remote exec box -L attach -S new "$command"
         assert_contains "$MOCK_LOG/ssh.box" '-T'
     done
 }
 test_errors_help() {
-    assert_status 2 run_tr remote -H
-    assert_contains "$CASE/err" '-H requires a host argument'
-    assert_status 2 run_tr remote -H ''
-    assert_status 2 run_tr remote -H --help
-    assert_status 2 run_tr remote -H all
-    assert_status 2 run_tr remote -H all new
-    assert_status 2 run_tr remote -H all list-sessions
-    assert_status 2 run_tr remote -H all ls extra
+    assert_status 2 run_tr remote exec
+    assert_contains "$CASE/err" 'remote exec requires a host argument'
+    assert_status 2 run_tr remote exec ''
+    assert_status 2 run_tr remote exec -H box ls
+    assert_contains "$CASE/err" 'invalid host'
+    assert_status 2 run_tr remote exec all ls
+    assert_status 2 run_tr remote sessions extra
+    assert_contains "$CASE/err" 'remote sessions only accepts tmux global options'
+    assert_status 2 run_tr remote sessions -- ls
+    assert_status 2 run_tr remote sessions -L
+    assert_contains "$CASE/err" 'tmux option -L requires a value'
     assert_status 2 run_tr remote list extra
     assert_contains "$CASE/err" 'remote list does not accept arguments'
+    assert_status 2 run_tr remote select extra
+    assert_status 2 run_tr remote help extra
+    assert_status 2 run_tr help extra
     assert_status 2 run_tr remote ls
-    assert_contains "$CASE/err" 'remote tmux commands require -H host'
+    assert_contains "$CASE/err" 'unknown remote subcommand: ls'
     assert_status 2 run_tr remote typo
-    assert_status 0 run_tr --help
+    assert_contains "$CASE/err" 'run: tx remote help'
+    assert_status 2 run_tr remote -H box ls
+    assert_contains "$CASE/err" 'unknown remote subcommand: -H'
+    assert_status 2 run_tr remote --help
+    assert_status 0 run_tr help
     assert_contains "$CASE/out" 'tx remote register host'
     assert_contains "$CASE/out" 'tx remote list'
-    assert_status 0 run_tr remote --help
+    assert_contains "$CASE/out" 'tx remote exec host'
+    assert_contains "$CASE/out" 'tx remote sessions'
+    assert_contains "$CASE/out" 'tx remote select'
+    assert_status 0 run_tr remote help
     assert_contains "$CASE/out" 'TR_HOSTS'
     [ ! -e "$MOCK_LOG/tmux.local" ]
     [ ! -e "$MOCK_LOG/ssh.all" ]
+}
+test_remote_exec_names() {
+    # Hostnames may be identical to subcommands; the exec position disambiguates.
+    run_tr remote register list exec help sessions select register > /dev/null
+    local host
+    for host in list exec help sessions select register; do
+        clear_logs
+        run_tr remote exec "$host" ls
+        assert_args "$MOCK_LOG/tmux.$host" ls
+    done
 }
 test_remote_list() {
     # Missing or empty lists produce no output and do not create any files.
@@ -227,7 +253,7 @@ test_register_concurrent() {
     done
     for pid in "${pids[@]}"; do wait "$pid"; done
     assert_no_ssh
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     [ -f "$MOCK_LOG/ssh.existing" ]
     for ((i=0; i<8; i++)); do
         [ -f "$MOCK_LOG/ssh.server-$i" ] || fail "lost registration: server-$i"
@@ -267,13 +293,13 @@ test_register_config_path() {
     run_tr remote list > "$CASE/out"
     printf '%s\n' box dev staging > "$CASE/expected"
     diff -u "$CASE/expected" "$CASE/out"
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     local host
     for host in box dev staging; do [ -f "$MOCK_LOG/ssh.$host" ]; done
     local files=("$MOCK_LOG"/ssh.*)
     [ "${#files[@]}" -eq 3 ] || fail 'duplicate scan of registered host'
     clear_logs
-    run_tr remote -H dev ls
+    run_tr remote exec dev ls
     [ -f "$MOCK_LOG/ssh.dev" ]
     assert_clean
 }
@@ -281,7 +307,7 @@ test_register_io_errors() {
     mkdir -p "$HOME/.config/tmuxer/hosts"
     assert_status 2 run_tr remote register box
     assert_contains "$CASE/err" 'cannot read allow list'
-    assert_status 2 run_tr remote -H all ls
+    assert_status 2 run_tr remote sessions
     assert_contains "$CASE/err" 'cannot read allow list'
     assert_status 2 run_tr remote list
     assert_contains "$CASE/err" 'cannot read allow list'
@@ -292,7 +318,7 @@ test_register_io_errors() {
     rm "$HOME/.config/tmuxer"
     mkdir "$HOME/.config/tmuxer"
     printf 'valid\nbad host\n' > "$HOME/.config/tmuxer/hosts"
-    assert_status 2 run_tr remote -H all ls
+    assert_status 2 run_tr remote sessions
     assert_contains "$CASE/err" 'invalid host'
     assert_status 2 run_tr remote list
     assert_contains "$CASE/err" 'invalid host'
@@ -313,14 +339,14 @@ CONFIG
     write_row included 'hidden session:1:0'
     export TR_HOSTS='dev ignored included'
     # A missing allow list means local sessions only, even with SSH config/TR_HOSTS.
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     assert_no_ssh
     assert_contains "$CASE/out" $'[local]\tlocal session'
     [ ! -e "$HOME/.config/tmuxer/hosts" ]
     run_tr remote register dev outside-config > /dev/null
     clear_logs
     unset TR_HOSTS
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     [ -f "$MOCK_LOG/ssh.dev" ]
     [ -f "$MOCK_LOG/ssh.outside-config" ]
     [ ! -e "$MOCK_LOG/ssh.ignored" ]
@@ -340,7 +366,7 @@ test_hosts_filter() {
     printf 'Host ignored\n' > "$HOME/.ssh/config"
     run_tr remote register alpha beta gamma excluded > /dev/null
     export TR_HOSTS=$'alpha beta alpha\ngamma\tunregistered star*'
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     local files=("$MOCK_LOG"/ssh.*)
     [ "${#files[@]}" -eq 3 ]
     local host
@@ -350,29 +376,29 @@ test_hosts_filter() {
     [ ! -e "$MOCK_LOG/ssh.star*" ]
     clear_logs
     export TR_HOSTS=
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     assert_no_ssh
     # TR_HOSTS only filters discovery; explicit commands may use any registered host.
-    run_tr remote -H excluded ls
+    run_tr remote exec excluded ls
     [ -f "$MOCK_LOG/ssh.excluded" ]
 }
 test_unregistered_remote() {
     printf 'Host box\n' > "$HOME/.ssh/config"
     export TR_HOSTS=box
-    assert_status 2 run_tr remote -H box ls
+    assert_status 2 run_tr remote exec box ls
     assert_contains "$CASE/err" 'run: tx remote register box'
-    assert_status 2 run_tr remote -H box attach
-    assert_status 2 run_tr remote -H box
+    assert_status 2 run_tr remote exec box attach
+    assert_status 2 run_tr remote exec box
     TR_INTERNAL_PREVIEW=1 assert_status 2 run_tr remote $'box\tsession\t1\tdetached'
     assert_no_ssh
     [ ! -e "$MOCK_LOG/tmux.box" ]
     run_tr remote register box > /dev/null
-    run_tr remote -H box ls
+    run_tr remote exec box ls
     [ -f "$MOCK_LOG/ssh.box" ]
     # Removing the entry revokes access, including previews and picker selections.
     : > "$HOME/.config/tmuxer/hosts"
     clear_logs
-    assert_status 2 run_tr remote -H box ls
+    assert_status 2 run_tr remote exec box ls
     TR_INTERNAL_PREVIEW=1 assert_status 2 run_tr remote $'box\tsession\t1\tdetached'
     assert_no_ssh
     assert_status 0 run_tr ls
@@ -385,7 +411,7 @@ test_all_output() {
     write_row dead 'invisible:1:0'
     write_row password 'invisible:1:0'
     minimal_path
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     printf "HOST\tSESSION\tWINDOWS\tSTATE\n[local]\tlocal name\t2\tdetached\nbox\t  remote's \$;[]  \t3\tattached\n" > "$CASE/expected"
     /usr/bin/diff -u "$CASE/expected" "$CASE/out"
     assert_contains "$MOCK_LOG/ssh.box" 'BatchMode=yes'
@@ -396,16 +422,20 @@ test_all_output() {
 test_all_socket() {
     run_tr remote register box > /dev/null
     export TR_HOSTS=box
-    run_tr remote -L 'shared socket' -H all ls > "$CASE/out"
+    run_tr remote sessions -L 'shared socket' > "$CASE/out"
     assert_args "$MOCK_LOG/tmux.local" -L 'shared socket' list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
     assert_args "$MOCK_LOG/tmux.box" -L 'shared socket' list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    clear_logs
+    run_tr remote sessions -vLsocket -S '/tmp/custom socket' -- > "$CASE/out"
+    assert_args "$MOCK_LOG/tmux.local" -vLsocket -S '/tmp/custom socket' -- list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_args "$MOCK_LOG/tmux.box" -vLsocket -S '/tmp/custom socket' -- list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
 }
 test_parallel() {
     run_tr remote register barrier-a barrier-b > /dev/null
     export TR_HOSTS='barrier-a barrier-b' MOCK_BARRIER=1
     write_row barrier-a 'first:1:0'
     write_row barrier-b 'second:1:0'
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     assert_contains "$CASE/out" $'barrier-a\tfirst'
     assert_contains "$CASE/out" $'barrier-b\tsecond'
 }
@@ -434,7 +464,7 @@ test_select_nested() {
 test_select_remote() {
     selector_fixture
     export MOCK_PICK=$'box\t'"$SESSION"$'\t2\tattached'
-    run_tr remote
+    run_tr remote select
     assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' attach -t "=$SESSION"
     assert_contains "$MOCK_LOG/ssh.box" '-t'
     assert_clean
@@ -458,7 +488,7 @@ test_preview_local() {
 test_preview_remote() {
     selector_fixture
     export MOCK_RUN_PREVIEW=1 MOCK_PICK=$'box\t'"$SESSION"$'\t2\tattached'
-    run_tr remote
+    run_tr remote select
     assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' capture-pane -p -t "=$SESSION:" -S -100 attach -t "=$SESSION"
     assert_contains "$MOCK_LOG/preview-output" 'mock pane contents'
     assert_clean
@@ -490,15 +520,15 @@ test_install() {
     NAME=tm PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
     [ -x "$CASE/prefix space/bin/tm" ]
     cmp "$TR" "$CASE/prefix space/bin/tm"
-    "$CASE/prefix space/bin/tm" --help > "$CASE/out"
+    "$CASE/prefix space/bin/tm" help > "$CASE/out"
     assert_contains "$CASE/out" 'Usage: tm '
     assert_contains "$CASE/out" 'tm remote register host'
     "$CASE/prefix space/bin/tm" remote register custom-host > "$CASE/out"
     "$CASE/prefix space/bin/tm" remote list > "$CASE/out"
     assert_contains "$CASE/out" 'custom-host'
-    "$CASE/prefix space/bin/tm" remote -H custom-host ls
+    "$CASE/prefix space/bin/tm" remote exec custom-host ls
     assert_args "$MOCK_LOG/tmux.custom-host" ls
-    assert_status 2 "$CASE/prefix space/bin/tm" remote -H unregistered ls
+    assert_status 2 "$CASE/prefix space/bin/tm" remote exec unregistered ls
     assert_contains "$CASE/err" 'run: tm remote register unregistered'
     "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
     [ -x "$HOME/.local/bin/tx" ]
@@ -506,18 +536,18 @@ test_install() {
     cmp "$TR" "$HOME/.local/bin/tx"
     PATH="$HOME/.local/bin:$CASE/bin:/usr/bin:/bin"
     export PATH
-    tx --help > "$CASE/out"
+    tx help > "$CASE/out"
     assert_contains "$CASE/out" 'Usage: tx '
     assert_contains "$CASE/out" 'tx remote register host'
     tx remote register registered > "$CASE/out"
     tx remote list > "$CASE/out"
     assert_contains "$CASE/out" 'registered'
-    tx remote -H registered ls
+    tx remote exec registered ls
     assert_args "$MOCK_LOG/tmux.registered" ls
-    assert_status 2 tx remote -H unregistered ls
+    assert_status 2 tx remote exec unregistered ls
     assert_contains "$CASE/err" 'run: tx remote register unregistered'
-    assert_status 2 tx remote -H
-    assert_contains "$CASE/err" 'tx: -H requires a host argument'
+    assert_status 2 tx remote exec
+    assert_contains "$CASE/err" 'tx: remote exec requires a host argument'
     tx ls
     assert_args "$MOCK_LOG/tmux.local" ls
     # NVM uses this conversion during shell startup. It must reach system tr.
@@ -540,7 +570,7 @@ test_real_tmux() {
         sleep 0.05
     done
     [ "$found" -eq 1 ] || fail 'real pane did not print marker'
-    run_tr remote -H all ls > "$CASE/out"
+    run_tr remote sessions > "$CASE/out"
     assert_contains "$CASE/out" $'[local]\t'"$session"$'\t1\tdetached'
     TR_INTERNAL_PREVIEW=1 run_tr remote $'[local]\t'"$session"$'\t1\tdetached' > "$CASE/preview"
     assert_contains "$CASE/preview" 'TR_REAL_OK'
@@ -572,7 +602,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tr-tests.XXXXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 export WORK TEST_BASH ORIGINAL_PATH REAL_TMUX
-tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_list register register_concurrent register_invalid register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install real_tmux'
+tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_exec_names remote_list register register_concurrent register_invalid register_config_path register_io_errors allowlist_discovery hosts_filter unregistered_remote all_output all_socket parallel select_local select_nested select_remote select_revoked preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install real_tmux'
 passed=0
 failed=0
 for test in $tests; do

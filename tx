@@ -12,27 +12,29 @@ LOCAL_HOST='[local]'
 usage() {
     printf '%s\n' \
         "Usage: $PROGRAM [tmux arguments...]" \
-        "       $PROGRAM remote [subcommand or -H host]" \
+        "       $PROGRAM remote [subcommand]" \
         "  $PROGRAM                         Equivalent to tmux (including its default command)" \
         "  $PROGRAM ls                      Equivalent to tmux ls" \
         "  $PROGRAM remote                  Select a local or remote session (requires fzf)" \
+        "  $PROGRAM remote select           Select a local or remote session (requires fzf)" \
         "  $PROGRAM remote list             List registered remote hosts without connecting" \
         "  $PROGRAM remote register host [host ...]  Add remote hosts to the allow list" \
-        "  $PROGRAM remote -H server ls     Run tmux ls on a registered server" \
-        "  $PROGRAM remote -H all ls        List local and registered remote sessions" \
-        "  $PROGRAM remote --help           Show remote command help" \
-        "  $PROGRAM --help                  Show help"
+        "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
+        "  $PROGRAM remote sessions         List local and registered remote sessions" \
+        "  $PROGRAM remote help             Show remote command help" \
+        "  $PROGRAM help                    Show help"
 }
 
 remote_usage() {
     printf '%s\n' \
-        "Usage: $PROGRAM remote [subcommand or -H host]" \
+        "Usage: $PROGRAM remote [subcommand]" \
         "  $PROGRAM remote                  Select a local or remote session (requires fzf)" \
+        "  $PROGRAM remote select           Select a local or remote session (requires fzf)" \
         "  $PROGRAM remote list             List every registered host, one per line" \
         "  $PROGRAM remote register host [host ...]  Add remote hosts to the allow list" \
-        "  $PROGRAM remote -H host [tmux arguments...]  Run tmux on a registered SSH host" \
-        "  $PROGRAM remote -H all ls        List local and registered remote sessions" \
-        "  $PROGRAM remote --help           Show help" \
+        "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
+        "  $PROGRAM remote sessions [tmux global options...]  List local and remote sessions" \
+        "  $PROGRAM remote help             Show help" \
         "Allow list: $HOSTS_FILE" \
         'TR_HOSTS="a b c" filters registered hosts for discovery (empty means local only).'
 }
@@ -220,7 +222,7 @@ preview() {
 
 select_session() {
     local selection host session windows state script_path quoted_script status
-    command -v fzf >/dev/null 2>&1 || fail "interactive selection requires fzf; you can still run commands such as $PROGRAM remote -H all ls"
+    command -v fzf >/dev/null 2>&1 || fail "interactive selection requires fzf; you can still run commands such as $PROGRAM remote sessions"
     collect_sessions
     if [ ! -s "$SCAN_DIR/sessions" ]; then
         printf '%s: no available sessions found\n' "$PROGRAM" >&2
@@ -252,52 +254,64 @@ TAB=$'\t'
 GLOBALS=()
 ARGS=()
 HOST=
-HAS_HOST=0
+OPERATION=
 COMMAND=
-if [ "$#" -eq 1 ] && [ "$1" = --help ]; then usage; exit 0; fi
+if [ "${1-}" = help ]; then
+    [ "$#" -eq 1 ] || fail 'help does not accept arguments'
+    usage; exit 0
+fi
 if [ "${1-}" != remote ]; then cleanup; exec tmux "$@"; fi
 shift
 if [ "${TR_INTERNAL_PREVIEW-}" = 1 ]; then preview "${1-}"; exit $?; fi
-if [ "$#" -eq 1 ] && [ "$1" = --help ]; then remote_usage; exit 0; fi
-case "${1-}" in
-    register) shift; register_hosts "$@"; exit 0 ;;
+if [ "$#" -eq 0 ]; then select_session; exit $?; fi
+OPERATION=$1
+shift
+case "$OPERATION" in
+    help)
+        [ "$#" -eq 0 ] || fail 'remote help does not accept arguments'
+        remote_usage; exit 0 ;;
+    select)
+        [ "$#" -eq 0 ] || fail 'remote select does not accept arguments'
+        select_session; exit $? ;;
+    register) register_hosts "$@"; exit 0 ;;
     list)
-        shift
         [ "$#" -eq 0 ] || fail 'remote list does not accept arguments'
         list_hosts; exit 0 ;;
+    exec)
+        [ "$#" -gt 0 ] && [ -n "$1" ] || fail 'remote exec requires a host argument'
+        HOST=$1; shift
+        require_registered_host "$HOST" ;;
+    sessions) ;;
+    *) fail "unknown remote subcommand: $OPERATION (run: $PROGRAM remote help)" ;;
 esac
-if [ "$#" -eq 0 ]; then select_session; exit $?; fi
+ARGS=("$@")
 
-# Only parse wrapper/global options before the tmux command. In particular,
-# send-keys -H and option values containing -H are left untouched.
+# Inspect tmux global options to find the command for terminal allocation and
+# session discovery. Every argument is forwarded unchanged by remote exec.
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        -H)
-            [ "$#" -ge 2 ] && [ -n "$2" ] || fail '-H requires a host argument'
-            case "$2" in -*) fail '-H requires a host argument' ;; esac
-            HOST=$2; HAS_HOST=1; shift 2 ;;
         --)
-            ARGS[${#ARGS[@]}]=$1; GLOBALS[${#GLOBALS[@]}]=$1; shift
+            GLOBALS[${#GLOBALS[@]}]=$1; shift
             COMMAND=${1-}; break ;;
         -?*)
-            option_needs_value "$1"
-            ARGS[${#ARGS[@]}]=$1; GLOBALS[${#GLOBALS[@]}]=$1; shift
+            TMUX_OPTION=$1
+            option_needs_value "$TMUX_OPTION"
+            GLOBALS[${#GLOBALS[@]}]=$1; shift
             if [ "$NEEDS_VALUE" = 1 ] && [ "$#" -gt 0 ]; then
-                ARGS[${#ARGS[@]}]=$1; GLOBALS[${#GLOBALS[@]}]=$1; shift
+                GLOBALS[${#GLOBALS[@]}]=$1; shift
+            elif [ "$NEEDS_VALUE" = 1 ] && [ "$OPERATION" = sessions ]; then
+                fail "tmux option $TMUX_OPTION requires a value"
             fi ;;
         *) COMMAND=$1; break ;;
     esac
 done
-ARGS=("${ARGS[@]}" "$@")
-[ "$HAS_HOST" = 1 ] || fail "remote tmux commands require -H host (run: $PROGRAM remote --help)"
-if [ "$HOST" = all ]; then
-    [ "$COMMAND" = ls ] && [ "$#" -eq 1 ] || fail '-H all only supports ls (tmux global options are allowed)'
+if [ "$OPERATION" = sessions ]; then
+    [ "$#" -eq 0 ] || fail 'remote sessions only accepts tmux global options'
     collect_sessions
     printf 'HOST\tSESSION\tWINDOWS\tSTATE\n'
     while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done < "$SCAN_DIR/sessions"
     exit 0
 fi
-require_registered_host "$HOST"
 quote_command tmux "${ARGS[@]}"
 cleanup
 case "$COMMAND" in
