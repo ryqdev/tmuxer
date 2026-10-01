@@ -7,6 +7,8 @@
 ## 安装
 
 ```bash
+git clone https://github.com/ryqdev/tmuxer.git
+cd tmuxer
 ./install.sh                     # ~/.local/bin/tr
 NAME=tx ./install.sh             # ~/.local/bin/tx（推荐）
 PREFIX=/usr/local NAME=rt ./install.sh  # /usr/local/bin/rt，需要相应写权限
@@ -93,3 +95,7 @@ shellcheck --severity=error tr install.sh tests/run.sh tests/mocks/*
 测试不依赖 bats，使用系统的 script(1) 生成终端，必须有本机 tmux；真实 tmux 用 `/tmp` 下的临时 TMUX_TMPDIR 和独立 `-L` / `-S` socket，以免 UNIX socket 路径超过长度限制，也不触碰已有服务器。
 
 模拟 ssh 和 fzf 覆盖参数引号、空参数和换行、TTY/非 TTY、全局选项、错误输入、Include 和 TR_HOSTS、并行扫描、汇总输出、选择器调用、预览和临时目录清理。真实本机 tmux 覆盖创建、列出、send-keys、capture-pane、kill-session 及两个 socket 选项。模拟不会验证实际 SSH 网络、认证、ProxyJump、ControlMaster 或真实 fzf 界面的操作体验。
+
+## 协议
+
+[MIT License](LICENSE)，Copyright (c) 2026 ryqdev。

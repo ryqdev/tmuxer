@@ -1,0 +1,13 @@
+# Local configuration, credentials and generated logs.
+.DS_Store
+.env
+.env.*
+!.env.example
+.ssh/
+*.pem
+*.key
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.log
