@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+# bash 3.2 compatible; remote commands are quoted for a POSIX shell.
+
+HOSTS=()
+CONFIG_SEEN=()
+CONFIG_WORDS=()
+SCAN_PIDS=()
+SCAN_DIR=
+LOCAL_HOST='[local]'
+
+usage() {
+    printf '%s\n' \
+        '用法：tr [-H 主机] [tmux 参数...]' \
+        '  tr                 交互选择本机和 SSH 主机的 session（需要 fzf）' \
+        '  tr ls              等价于 tmux ls' \
+        '  tr -H server ls    在 server 上执行 tmux ls' \
+        '  tr -H all ls       列出本机和所有主机的 session' \
+        '  tr --help          显示帮助' \
+        'TR_HOSTS="a b c" 覆盖 ~/.ssh/config 中的主机列表（空值只扫描本机）。'
+}
+
+fail() { printf 'tr: %s\n' "$*" >&2; exit 2; }
+
+cleanup() {
+    local pid
+    for pid in "${SCAN_PIDS[@]}"; do kill "$pid" 2>/dev/null || :; done
+    for pid in "${SCAN_PIDS[@]}"; do wait "$pid" 2>/dev/null || :; done
+    SCAN_PIDS=()
+    if [ -n "$SCAN_DIR" ]; then rm -rf -- "$SCAN_DIR"; SCAN_DIR=; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+# Each argument, including an empty argument, becomes one shell word.
+quote_command() {
+    local arg
+    REMOTE_COMMAND=
+    for arg in "$@"; do
+        arg=${arg//\'/\'\\\'\'}
+        REMOTE_COMMAND="${REMOTE_COMMAND}${REMOTE_COMMAND:+ }'$arg'"
+    done
+}
+
+add_host() {
+    local host=$1 existing
+    [ -n "$host" ] || return
+    for existing in "${HOSTS[@]}"; do [ "$existing" != "$host" ] || return; done
+    HOSTS[${#HOSTS[@]}]=$host
+}
+
+# Tokenize config syntax without eval: whitespace, quotes, escapes and comments.
+config_words() {
+    local line=$1 word= char quote= escaped=0 started=0 i
+    CONFIG_WORDS=()
+    for ((i=0; i<${#line}; i++)); do
+        char=${line:i:1}
+        if [ "$escaped" = 1 ]; then
+            word=$word$char; escaped=0; started=1
+        elif [ "$char" = '\' ] && [ "$quote" != "'" ]; then
+            escaped=1; started=1
+        elif [ -n "$quote" ]; then
+            if [ "$char" = "$quote" ]; then quote=; else word=$word$char; fi
+        else
+            case "$char" in
+                "'"|'"') quote=$char; started=1 ;;
+                '#') break ;;
+                ' '|$'\t'|$'\r')
+                    if [ "$started" = 1 ]; then
+                        CONFIG_WORDS[${#CONFIG_WORDS[@]}]=$word; word=; started=0
+                    fi ;;
+                *) word=$word$char; started=1 ;;
+            esac
+        fi
+    done
+    [ "$escaped" = 0 ] || word=$word'\'
+    if [ "$started" = 1 ]; then CONFIG_WORDS[${#CONFIG_WORDS[@]}]=$word; fi
+}
+
+read_config() {
+    local path=$1 depth=$2 directory seen line keyword value pattern included
+    local -a words
+    [ "$depth" -lt 32 ] && [ -r "$path" ] && [ -f "$path" ] || return 0
+    directory=${path%/*}
+    directory=$(CDPATH= cd -- "${directory:-/}" 2>/dev/null && pwd -P) || return 0
+    path=$directory/${path##*/}
+    for seen in "${CONFIG_SEEN[@]}"; do [ "$seen" != "$path" ] || return 0; done
+    CONFIG_SEEN[${#CONFIG_SEEN[@]}]=$path
+    while IFS= read -r line || [ -n "$line" ]; do
+        config_words "$line"
+        [ "${#CONFIG_WORDS[@]}" -gt 0 ] || continue
+        words=("${CONFIG_WORDS[@]}")
+        keyword=${words[0]}
+        words=("${words[@]:1}")
+        case "$keyword" in
+            *=*) value=${keyword#*=}; keyword=${keyword%%=*}
+                 [ -z "$value" ] || words=("$value" "${words[@]}") ;;
+        esac
+        case "${words[0]-}" in
+            '=') words=("${words[@]:1}") ;;
+            =*) value=${words[0]#=}; words=("$value" "${words[@]:1}") ;;
+        esac
+        case "$keyword" in
+            [Hh][Oo][Ss][Tt])
+                for value in "${words[@]}"; do
+                    case "$value" in *'*'*|*'?'*|*'['*|!*|'-'*) continue ;; esac
+                    add_host "$value"
+                done ;;
+            [Ii][Nn][Cc][Ll][Uu][Dd][Ee])
+                for pattern in "${words[@]}"; do
+                    case "$pattern" in
+                        '~/'*) pattern=$HOME/${pattern#\~/} ;;
+                        /*) ;;
+                        *) pattern=$HOME/.ssh/$pattern ;;
+                    esac
+                    # Empty IFS keeps spaces intact while allowing pathname expansion.
+                    local IFS=
+                    for included in $pattern; do read_config "$included" "$((depth + 1))"; done
+                done ;;
+        esac
+    done < "$path"
+}
+
+get_hosts() {
+    local host
+    HOSTS=()
+    if [ "${TR_HOSTS+x}" = x ]; then
+        local IFS=$' \t\n'
+        set -f
+        for host in $TR_HOSTS; do add_host "$host"; done
+        set +f
+    else
+        CONFIG_SEEN=()
+        shopt -s nullglob
+        read_config "$HOME/.ssh/config" 0
+        shopt -u nullglob
+    fi
+}
+
+# Return whether a global option token needs its following argument. Attached
+# values (-Lsocket) and grouped flags (-vL socket) follow tmux's getopt syntax.
+option_needs_value() {
+    local token=$1 i char
+    NEEDS_VALUE=0
+    for ((i=1; i<${#token}; i++)); do
+        char=${token:i:1}
+        case "$char" in
+            c|f|L|S|T)
+                if [ "$i" -eq "$((${#token} - 1))" ]; then NEEDS_VALUE=1; fi
+                return ;;
+        esac
+    done
+}
+
+scan_one() {
+    trap - EXIT INT TERM HUP
+    local host=$1 output
+    if [ "$host" = "$LOCAL_HOST" ]; then
+        output=$(tmux "${GLOBALS[@]}" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' 2>/dev/null) || return 0
+    else
+        quote_command tmux "${GLOBALS[@]}" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+        output=$(ssh -T -o BatchMode=yes -o ConnectTimeout=3 -o ConnectionAttempts=1 -- "$host" "$REMOTE_COMMAND" 2>/dev/null) || return 0
+    fi
+    [ -n "$output" ] || return 0
+    printf '%s\n' "$output" | awk -F ':' -v host="$host" \
+        'NF == 3 { printf "%s\t%s\t%s\t%s\n", host, $1, $2, ($3 + 0 > 0 ? "attached" : "detached") }'
+}
+
+collect_sessions() {
+    local index=0 host pid line
+    get_hosts
+    SCAN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tr.XXXXXXXX") || fail '无法创建临时目录'
+    for host in "$LOCAL_HOST" "${HOSTS[@]}"; do
+        scan_one "$host" > "$SCAN_DIR/$index" &
+        SCAN_PIDS[${#SCAN_PIDS[@]}]=$!
+        index=$((index + 1))
+    done
+    for pid in "${SCAN_PIDS[@]}"; do wait "$pid" || :; done
+    SCAN_PIDS=()
+    : > "$SCAN_DIR/sessions"
+    for ((index=0; index<=${#HOSTS[@]}; index++)); do
+        while IFS= read -r line || [ -n "$line" ]; do
+            printf '%s\n' "$line" >> "$SCAN_DIR/sessions"
+        done < "$SCAN_DIR/$index"
+    done
+}
+
+preview() {
+    local host session windows state
+    IFS=$'\t' read -r host session windows state <<< "$1"
+    [ -n "$host" ] && [ -n "$session" ] || return 0
+    if [ "$host" = "$LOCAL_HOST" ]; then
+        tmux capture-pane -p -t "=$session" -S -100 2>/dev/null
+    else
+        quote_command tmux capture-pane -p -t "=$session" -S -100
+        ssh -T -o BatchMode=yes -o ConnectTimeout=3 -o ConnectionAttempts=1 -- "$host" "$REMOTE_COMMAND" 2>/dev/null
+    fi
+}
+
+select_session() {
+    local selection host session windows state script_path quoted_script status
+    command -v fzf >/dev/null 2>&1 || fail '交互选择需要 fzf；也可以直接使用 tr ls 等命令'
+    collect_sessions
+    if [ ! -s "$SCAN_DIR/sessions" ]; then
+        printf 'tr: 没有找到可用的 session\n' >&2
+        return 1
+    fi
+    script_path=$0
+    case "$script_path" in */*) ;; *) script_path=$(command -v "$script_path") ;; esac
+    script_path=$(CDPATH= cd -- "${script_path%/*}" && pwd)/${script_path##*/}
+    quote_command "$script_path"
+    quoted_script=$REMOTE_COMMAND
+    selection=$(SHELL=/bin/sh fzf --delimiter "$TAB" --header "HOST${TAB}SESSION${TAB}WINDOWS${TAB}STATE" \
+        --preview "TR_INTERNAL_PREVIEW=1 $quoted_script {}" --preview-window 'right:60%' < "$SCAN_DIR/sessions")
+    status=$?
+    [ "$status" -eq 0 ] && [ -n "$selection" ] || return "$status"
+    IFS=$'\t' read -r host session windows state <<< "$selection"
+    [ -n "$host" ] && [ -n "$session" ] || fail 'fzf 返回了无效的 session'
+    cleanup
+    if [ "$host" = "$LOCAL_HOST" ]; then
+        if [ -n "${TMUX-}" ]; then exec tmux switch-client -t "=$session";
+        else exec tmux attach -t "=$session"; fi
+    else
+        quote_command tmux attach -t "=$session"
+        exec ssh -t -- "$host" "$REMOTE_COMMAND"
+    fi
+}
+
+TAB=$'\t'
+GLOBALS=()
+ARGS=()
+HOST=
+HAS_HOST=0
+COMMAND=
+if [ "${TR_INTERNAL_PREVIEW-}" = 1 ]; then preview "${1-}"; exit $?; fi
+if [ "$#" -eq 1 ] && [ "$1" = --help ]; then usage; exit 0; fi
+if [ "$#" -eq 0 ]; then select_session; exit $?; fi
+
+# Only parse wrapper/global options before the tmux command. In particular,
+# send-keys -H and option values containing -H are left untouched.
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -H)
+            [ "$#" -ge 2 ] && [ -n "$2" ] || fail '-H 缺少主机参数'
+            case "$2" in -*) fail '-H 缺少主机参数' ;; esac
+            HOST=$2; HAS_HOST=1; shift 2 ;;
+        --)
+            ARGS[${#ARGS[@]}]=$1; GLOBALS[${#GLOBALS[@]}]=$1; shift
+            COMMAND=${1-}; break ;;
+        -?*)
+            option_needs_value "$1"
+            ARGS[${#ARGS[@]}]=$1; GLOBALS[${#GLOBALS[@]}]=$1; shift
+            if [ "$NEEDS_VALUE" = 1 ] && [ "$#" -gt 0 ]; then
+                ARGS[${#ARGS[@]}]=$1; GLOBALS[${#GLOBALS[@]}]=$1; shift
+            fi ;;
+        *) COMMAND=$1; break ;;
+    esac
+done
+ARGS=("${ARGS[@]}" "$@")
+if [ "$HAS_HOST" = 0 ]; then cleanup; exec tmux "${ARGS[@]}"; fi
+if [ "$HOST" = all ]; then
+    [ "$COMMAND" = ls ] && [ "$#" -eq 1 ] || fail '-H all 仅支持 ls（可带 tmux 全局选项）'
+    collect_sessions
+    printf 'HOST\tSESSION\tWINDOWS\tSTATE\n'
+    while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done < "$SCAN_DIR/sessions"
+    exit 0
+fi
+quote_command tmux "${ARGS[@]}"
+cleanup
+case "$COMMAND" in
+    ''|attach|attach-session|a|at|new|new-session)
+        if [ -t 0 ]; then exec ssh -t -- "$HOST" "$REMOTE_COMMAND"; fi ;;
+esac
+exec ssh -T -- "$HOST" "$REMOTE_COMMAND"
