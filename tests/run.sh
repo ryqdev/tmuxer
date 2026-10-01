@@ -3,7 +3,7 @@
 set -eu
 
 TEST_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-TR=$TEST_ROOT/tr
+TR=$TEST_ROOT/tx
 TEST_BASH=${TEST_BASH:-$BASH}
 ORIGINAL_PATH=${ORIGINAL_PATH:-$PATH}
 REAL_TMUX=${REAL_TMUX:-$(command -v tmux || :)}
@@ -134,7 +134,7 @@ test_errors_help() {
     assert_status 2 run_tr -H all list-sessions
     assert_status 2 run_tr -H all ls extra
     assert_status 0 run_tr --help
-    assert_contains "$CASE/out" 'tr register host'
+    assert_contains "$CASE/out" 'tx register host'
     assert_contains "$CASE/out" 'TR_HOSTS'
     [ ! -e "$MOCK_LOG/tmux.local" ]
     [ ! -e "$MOCK_LOG/ssh.all" ]
@@ -296,7 +296,7 @@ test_unregistered_remote() {
     printf 'Host box\n' > "$HOME/.ssh/config"
     export TR_HOSTS=box
     assert_status 2 run_tr -H box ls
-    assert_contains "$CASE/err" 'run: tr register box'
+    assert_contains "$CASE/err" 'run: tx register box'
     assert_status 2 run_tr -H box attach
     assert_status 2 run_tr -H box
     TR_INTERNAL_PREVIEW=1 assert_status 2 run_tr $'box\tsession\t1\tdetached'
@@ -418,16 +418,42 @@ test_cancel_empty_missing_fzf() {
 }
 test_script_path_spaces() {
     mkdir "$CASE/a directory's"
-    cp "$TR" "$CASE/a directory's/tr"
-    TR="$CASE/a directory's/tr"
+    cp "$TR" "$CASE/a directory's/tx"
+    TR="$CASE/a directory's/tx"
     test_preview_remote
 }
 test_install() {
-    NAME=tx PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
-    [ -x "$CASE/prefix space/bin/tx" ]
-    cmp "$TR" "$CASE/prefix space/bin/tx"
+    NAME=tm PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
+    [ -x "$CASE/prefix space/bin/tm" ]
+    cmp "$TR" "$CASE/prefix space/bin/tm"
+    "$CASE/prefix space/bin/tm" --help > "$CASE/out"
+    assert_contains "$CASE/out" 'Usage: tm '
+    assert_contains "$CASE/out" 'tm register host'
+    "$CASE/prefix space/bin/tm" register custom-host > "$CASE/out"
+    "$CASE/prefix space/bin/tm" -H custom-host ls
+    assert_args "$MOCK_LOG/tmux.custom-host" ls
+    assert_status 2 "$CASE/prefix space/bin/tm" -H unregistered ls
+    assert_contains "$CASE/err" 'run: tm register unregistered'
     "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
-    [ -x "$HOME/.local/bin/tr" ]
+    [ -x "$HOME/.local/bin/tx" ]
+    [ ! -e "$HOME/.local/bin/tr" ]
+    cmp "$TR" "$HOME/.local/bin/tx"
+    PATH="$HOME/.local/bin:$CASE/bin:/usr/bin:/bin"
+    export PATH
+    tx --help > "$CASE/out"
+    assert_contains "$CASE/out" 'Usage: tx '
+    assert_contains "$CASE/out" 'tx register host'
+    tx register registered > "$CASE/out"
+    tx -H registered ls
+    assert_args "$MOCK_LOG/tmux.registered" ls
+    assert_status 2 tx -H unregistered ls
+    assert_contains "$CASE/err" 'run: tx register unregistered'
+    assert_status 2 tx -H
+    assert_contains "$CASE/err" 'tx: -H requires a host argument'
+    tx ls
+    assert_args "$MOCK_LOG/tmux.local" ls
+    # NVM uses this conversion during shell startup. It must reach system tr.
+    [ "$(printf t | command tr t '\t')" = $'\t' ]
     assert_status 2 env NAME='../bad' PREFIX="$CASE/prefix" "$TEST_BASH" "$TEST_ROOT/install.sh"
 }
 test_real_tmux() {
