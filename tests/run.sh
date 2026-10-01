@@ -268,6 +268,14 @@ test_script_path_spaces() {
     TR="$CASE/a directory's/tr"
     test_preview_remote
 }
+test_install() {
+    NAME=tx PREFIX="$CASE/prefix space" "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
+    [ -x "$CASE/prefix space/bin/tx" ]
+    cmp "$TR" "$CASE/prefix space/bin/tx"
+    "$TEST_BASH" "$TEST_ROOT/install.sh" > "$CASE/out"
+    [ -x "$HOME/.local/bin/tr" ]
+    assert_status 2 env NAME='../bad' PREFIX="$CASE/prefix" "$TEST_BASH" "$TEST_ROOT/install.sh"
+}
 test_real_tmux() {
     [ -n "$REAL_TMUX" ] || fail 'real tmux is required'
     REAL_DIR=$(mktemp -d /tmp/tr-real.XXXXXXXX)
@@ -316,7 +324,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tr-tests.XXXXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 export WORK TEST_BASH ORIGINAL_PATH REAL_TMUX
-tests='local_forward remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help config_hosts hosts_override all_output all_socket parallel select_local select_nested select_remote preview_local preview_remote cancel_empty_missing_fzf script_path_spaces real_tmux'
+tests='local_forward remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help config_hosts hosts_override all_output all_socket parallel select_local select_nested select_remote preview_local preview_remote cancel_empty_missing_fzf script_path_spaces install real_tmux'
 passed=0
 failed=0
 for test in $tests; do
