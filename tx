@@ -3,8 +3,8 @@
 
 PROGRAM=${0##*/}
 HOSTS=()
-CONFIG_SEEN=()
-CONFIG_WORDS=()
+REGISTERED_HOSTS=()
+HOSTS_FILE=${XDG_CONFIG_HOME:-$HOME/.config}/tmuxer/hosts
 SCAN_PIDS=()
 SCAN_DIR=
 LOCAL_HOST='[local]'
@@ -13,11 +13,13 @@ usage() {
     printf '%s\n' \
         "Usage: $PROGRAM [-H host] [tmux arguments...]" \
         "  $PROGRAM                 Select a local or remote session interactively (requires fzf)" \
+        "  $PROGRAM register host [host ...]  Add remote hosts to the persistent allow list" \
         "  $PROGRAM ls              Equivalent to tmux ls" \
-        "  $PROGRAM -H server ls    Run tmux ls on server" \
-        "  $PROGRAM -H all ls       List sessions on this machine and all SSH hosts" \
+        "  $PROGRAM -H server ls    Run tmux ls on a registered server" \
+        "  $PROGRAM -H all ls       List sessions on this machine and registered hosts" \
         "  $PROGRAM --help          Show help" \
-        'TR_HOSTS="a b c" overrides hosts from ~/.ssh/config (empty means local only).'
+        "Allow list: $HOSTS_FILE" \
+        'TR_HOSTS="a b c" filters registered hosts for discovery (empty means local only).'
 }
 
 fail() { printf '%s: %s\n' "$PROGRAM" "$*" >&2; exit 2; }
@@ -51,91 +53,85 @@ add_host() {
     HOSTS[${#HOSTS[@]}]=$host
 }
 
-# Tokenize config syntax without eval: whitespace, quotes, escapes and comments.
-config_words() {
-    local line=$1 word= char quote= escaped=0 started=0 i
-    CONFIG_WORDS=()
-    for ((i=0; i<${#line}; i++)); do
-        char=${line:i:1}
-        if [ "$escaped" = 1 ]; then
-            word=$word$char; escaped=0; started=1
-        elif [ "$char" = '\' ] && [ "$quote" != "'" ]; then
-            escaped=1; started=1
-        elif [ -n "$quote" ]; then
-            if [ "$char" = "$quote" ]; then quote=; else word=$word$char; fi
-        else
-            case "$char" in
-                "'"|'"') quote=$char; started=1 ;;
-                '#') break ;;
-                ' '|$'\t'|$'\r')
-                    if [ "$started" = 1 ]; then
-                        CONFIG_WORDS[${#CONFIG_WORDS[@]}]=$word; word=; started=0
-                    fi ;;
-                *) word=$word$char; started=1 ;;
-            esac
-        fi
-    done
-    [ "$escaped" = 0 ] || word=$word'\'
-    if [ "$started" = 1 ]; then CONFIG_WORDS[${#CONFIG_WORDS[@]}]=$word; fi
+validate_host() {
+    case "$1" in
+        ''|-*|all|*[!a-zA-Z0-9._@:%+-]*)
+            fail "invalid host: $1 (use an SSH alias, hostname, IP address, or user@host; all is reserved)" ;;
+    esac
 }
 
-read_config() {
-    local path=$1 depth=$2 directory seen line keyword value pattern included
-    local -a words
-    [ "$depth" -lt 32 ] && [ -r "$path" ] && [ -f "$path" ] || return 0
-    directory=${path%/*}
-    directory=$(CDPATH= cd -- "${directory:-/}" 2>/dev/null && pwd -P) || return 0
-    path=$directory/${path##*/}
-    for seen in "${CONFIG_SEEN[@]}"; do [ "$seen" != "$path" ] || return 0; done
-    CONFIG_SEEN[${#CONFIG_SEEN[@]}]=$path
-    while IFS= read -r line || [ -n "$line" ]; do
-        config_words "$line"
-        [ "${#CONFIG_WORDS[@]}" -gt 0 ] || continue
-        words=("${CONFIG_WORDS[@]}")
-        keyword=${words[0]}
-        words=("${words[@]:1}")
-        case "$keyword" in
-            *=*) value=${keyword#*=}; keyword=${keyword%%=*}
-                 [ -z "$value" ] || words=("$value" "${words[@]}") ;;
-        esac
-        case "${words[0]-}" in
-            '=') words=("${words[@]:1}") ;;
-            =*) value=${words[0]#=}; words=("$value" "${words[@]:1}") ;;
-        esac
-        case "$keyword" in
-            [Hh][Oo][Ss][Tt])
-                for value in "${words[@]}"; do
-                    case "$value" in *'*'*|*'?'*|*'['*|!*|'-'*) continue ;; esac
-                    add_host "$value"
-                done ;;
-            [Ii][Nn][Cc][Ll][Uu][Dd][Ee])
-                for pattern in "${words[@]}"; do
-                    case "$pattern" in
-                        '~/'*) pattern=$HOME/${pattern#\~/} ;;
-                        /*) ;;
-                        *) pattern=$HOME/.ssh/$pattern ;;
-                    esac
-                    # Empty IFS keeps spaces intact while allowing pathname expansion.
-                    local IFS=
-                    for included in $pattern; do read_config "$included" "$((depth + 1))"; done
-                done ;;
-        esac
-    done < "$path"
+host_is_registered() {
+    local registered
+    for registered in "${REGISTERED_HOSTS[@]}"; do
+        [ "$registered" != "$1" ] || return 0
+    done
+    return 1
+}
+
+load_registered_hosts() {
+    local host
+    REGISTERED_HOSTS=()
+    [ -e "$HOSTS_FILE" ] || [ -L "$HOSTS_FILE" ] || return 0
+    [ -f "$HOSTS_FILE" ] && [ -r "$HOSTS_FILE" ] || fail "cannot read allow list: $HOSTS_FILE"
+    while IFS= read -r host || [ -n "$host" ]; do
+        case "$host" in ''|'#'*) continue ;; esac
+        validate_host "$host"
+        if ! host_is_registered "$host"; then
+            REGISTERED_HOSTS[${#REGISTERED_HOSTS[@]}]=$host
+        fi
+    done < "$HOSTS_FILE" || fail "cannot read allow list: $HOSTS_FILE"
+}
+
+register_hosts() {
+    local host directory last_char=
+    local -a new_hosts
+    new_hosts=()
+    [ "$#" -gt 0 ] || fail 'register requires at least one host'
+    # Validate the whole request before changing the allow list.
+    for host in "$@"; do validate_host "$host"; done
+    load_registered_hosts
+    for host in "$@"; do
+        if ! host_is_registered "$host"; then
+            new_hosts[${#new_hosts[@]}]=$host
+            REGISTERED_HOSTS[${#REGISTERED_HOSTS[@]}]=$host
+        fi
+    done
+    if [ "${#new_hosts[@]}" -gt 0 ]; then
+        directory=${HOSTS_FILE%/*}
+        if [ -f "$HOSTS_FILE" ]; then
+            last_char=$(tail -c 1 -- "$HOSTS_FILE") || fail "cannot read allow list: $HOSTS_FILE"
+        fi
+        # Append instead of replacing the file so concurrent registrations cannot
+        # overwrite each other. Preserve a manually edited final unterminated line.
+        (
+            umask 077
+            mkdir -p -- "$directory" || exit 1
+            if [ -n "$last_char" ]; then printf '\n' >> "$HOSTS_FILE" || exit 1; fi
+            printf '%s\n' "${new_hosts[@]}" >> "$HOSTS_FILE"
+        ) || fail "cannot write allow list: $HOSTS_FILE"
+    fi
+    printf 'Registered: %s\n' "$@"
+}
+
+require_registered_host() {
+    validate_host "$1"
+    load_registered_hosts
+    host_is_registered "$1" || fail "host is not registered: $1 (run: $PROGRAM register $1)"
 }
 
 get_hosts() {
     local host
     HOSTS=()
+    load_registered_hosts
     if [ "${TR_HOSTS+x}" = x ]; then
         local IFS=$' \t\n'
         set -f
-        for host in $TR_HOSTS; do add_host "$host"; done
+        for host in $TR_HOSTS; do
+            if host_is_registered "$host"; then add_host "$host"; fi
+        done
         set +f
     else
-        CONFIG_SEEN=()
-        shopt -s nullglob
-        read_config "$HOME/.ssh/config" 0
-        shopt -u nullglob
+        HOSTS=("${REGISTERED_HOSTS[@]}")
     fi
 }
 
@@ -194,6 +190,7 @@ preview() {
     if [ "$host" = "$LOCAL_HOST" ]; then
         tmux capture-pane -p -t "=$session:" -S -100 2>/dev/null
     else
+        require_registered_host "$host"
         quote_command tmux capture-pane -p -t "=$session:" -S -100
         ssh -T -o BatchMode=yes -o ConnectTimeout=3 -o ConnectionAttempts=1 -- "$host" "$REMOTE_COMMAND" 2>/dev/null
     fi
@@ -223,6 +220,7 @@ select_session() {
         if [ -n "${TMUX-}" ]; then exec tmux switch-client -t "=$session";
         else exec tmux attach -t "=$session"; fi
     else
+        require_registered_host "$host"
         quote_command tmux attach -t "=$session"
         exec ssh -t -- "$host" "$REMOTE_COMMAND"
     fi
@@ -236,6 +234,7 @@ HAS_HOST=0
 COMMAND=
 if [ "${TR_INTERNAL_PREVIEW-}" = 1 ]; then preview "${1-}"; exit $?; fi
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then usage; exit 0; fi
+if [ "${1-}" = register ]; then shift; register_hosts "$@"; exit 0; fi
 if [ "$#" -eq 0 ]; then select_session; exit $?; fi
 
 # Only parse wrapper/global options before the tmux command. In particular,
@@ -267,6 +266,7 @@ if [ "$HOST" = all ]; then
     while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done < "$SCAN_DIR/sessions"
     exit 0
 fi
+require_registered_host "$HOST"
 quote_command tmux "${ARGS[@]}"
 cleanup
 case "$COMMAND" in

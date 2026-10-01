@@ -12,6 +12,9 @@ while IFS= read -r row || [ -n "$row" ]; do
 done
 [ "${MOCK_CANCEL-}" != 1 ] || exit 130
 [ -n "$selection" ] || exit 1
+if [ "${MOCK_REVOKE_REGISTRATION-}" = 1 ]; then
+    : > "${XDG_CONFIG_HOME:-$HOME/.config}/tmuxer/hosts"
+fi
 if [ "${MOCK_RUN_PREVIEW-}" = 1 ]; then
     quoted=${selection//\'/\'\\\'\'}
     quoted="'$quoted'"
