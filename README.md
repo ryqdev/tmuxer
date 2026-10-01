@@ -10,6 +10,28 @@ Use tmux commands as usual. Add `-H <host>` before the subcommand to run them ov
 | `tr -H all ls` | List sessions across this machine and all SSH hosts |
 | `tr --help` | Show help |
 
+## Installation
+
+Requires Bash 3.2+ and tmux. Remote commands also require SSH and tmux on the remote host. Install fzf to use the interactive session selector.
+
+```bash
+git clone https://github.com/ryqdev/tmuxer.git
+cd tmuxer
+./install.sh
+export PATH="$HOME/.local/bin:$PATH"
+tr --help
+```
+
+The installer copies `tr` to `~/.local/bin/tr`. Add the `export PATH` line to your shell configuration (such as `~/.zshrc` or `~/.bashrc`) to make it permanent.
+
+Set `PREFIX` to change the installation directory; the command is installed in `$PREFIX/bin`. Set `NAME` to change the command name. For example, to avoid shadowing the system `tr` command:
+
+```bash
+NAME=tx ./install.sh
+```
+
+Use `tx` in place of `tr` in the examples below if you choose that name.
+
 ## Examples
 
 ```bash
