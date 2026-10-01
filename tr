@@ -10,13 +10,13 @@ LOCAL_HOST='[local]'
 
 usage() {
     printf '%s\n' \
-        '用法：tr [-H 主机] [tmux 参数...]' \
-        '  tr                 交互选择本机和 SSH 主机的 session（需要 fzf）' \
-        '  tr ls              等价于 tmux ls' \
-        '  tr -H server ls    在 server 上执行 tmux ls' \
-        '  tr -H all ls       列出本机和所有主机的 session' \
-        '  tr --help          显示帮助' \
-        'TR_HOSTS="a b c" 覆盖 ~/.ssh/config 中的主机列表（空值只扫描本机）。'
+        'Usage: tr [-H host] [tmux arguments...]' \
+        '  tr                 Select a local or remote session interactively (requires fzf)' \
+        '  tr ls              Equivalent to tmux ls' \
+        '  tr -H server ls    Run tmux ls on server' \
+        '  tr -H all ls       List sessions on this machine and all SSH hosts' \
+        '  tr --help          Show help' \
+        'TR_HOSTS="a b c" overrides hosts from ~/.ssh/config (empty means local only).'
 }
 
 fail() { printf 'tr: %s\n' "$*" >&2; exit 2; }
@@ -170,7 +170,7 @@ scan_one() {
 collect_sessions() {
     local index=0 host pid line
     get_hosts
-    SCAN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tr.XXXXXXXX") || fail '无法创建临时目录'
+    SCAN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tr.XXXXXXXX") || fail 'cannot create temporary directory'
     for host in "$LOCAL_HOST" "${HOSTS[@]}"; do
         scan_one "$host" > "$SCAN_DIR/$index" &
         SCAN_PIDS[${#SCAN_PIDS[@]}]=$!
@@ -200,10 +200,10 @@ preview() {
 
 select_session() {
     local selection host session windows state script_path quoted_script status
-    command -v fzf >/dev/null 2>&1 || fail '交互选择需要 fzf；也可以直接使用 tr ls 等命令'
+    command -v fzf >/dev/null 2>&1 || fail 'interactive selection requires fzf; you can still run commands such as tr ls'
     collect_sessions
     if [ ! -s "$SCAN_DIR/sessions" ]; then
-        printf 'tr: 没有找到可用的 session\n' >&2
+        printf 'tr: no available sessions found\n' >&2
         return 1
     fi
     script_path=$0
@@ -216,7 +216,7 @@ select_session() {
     status=$?
     [ "$status" -eq 0 ] && [ -n "$selection" ] || return "$status"
     IFS=$'\t' read -r host session windows state <<< "$selection"
-    [ -n "$host" ] && [ -n "$session" ] || fail 'fzf 返回了无效的 session'
+    [ -n "$host" ] && [ -n "$session" ] || fail 'fzf returned an invalid session'
     cleanup
     if [ "$host" = "$LOCAL_HOST" ]; then
         if [ -n "${TMUX-}" ]; then exec tmux switch-client -t "=$session";
@@ -242,8 +242,8 @@ if [ "$#" -eq 0 ]; then select_session; exit $?; fi
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -H)
-            [ "$#" -ge 2 ] && [ -n "$2" ] || fail '-H 缺少主机参数'
-            case "$2" in -*) fail '-H 缺少主机参数' ;; esac
+            [ "$#" -ge 2 ] && [ -n "$2" ] || fail '-H requires a host argument'
+            case "$2" in -*) fail '-H requires a host argument' ;; esac
             HOST=$2; HAS_HOST=1; shift 2 ;;
         --)
             ARGS[${#ARGS[@]}]=$1; GLOBALS[${#GLOBALS[@]}]=$1; shift
@@ -260,7 +260,7 @@ done
 ARGS=("${ARGS[@]}" "$@")
 if [ "$HAS_HOST" = 0 ]; then cleanup; exec tmux "${ARGS[@]}"; fi
 if [ "$HOST" = all ]; then
-    [ "$COMMAND" = ls ] && [ "$#" -eq 1 ] || fail '-H all 仅支持 ls（可带 tmux 全局选项）'
+    [ "$COMMAND" = ls ] && [ "$#" -eq 1 ] || fail '-H all only supports ls (tmux global options are allowed)'
     collect_sessions
     printf 'HOST\tSESSION\tWINDOWS\tSTATE\n'
     while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done < "$SCAN_DIR/sessions"

@@ -4,13 +4,13 @@ set -eu
 name=${NAME:-tr}
 prefix=${PREFIX:-"$HOME/.local"}
 case "$name" in
-    ''|.|..|*/*) printf 'install: NAME 必须是文件名（例如 tr、tx、rt）\n' >&2; exit 2 ;;
+    ''|.|..|*/*) printf 'install: NAME must be a filename (for example tr, tx, rt)\n' >&2; exit 2 ;;
 esac
 
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 destination=$prefix/bin/$name
 if [ ! -f "$source_dir/tr" ]; then
-    printf 'install: 找不到 %s/tr\n' "$source_dir" >&2
+    printf 'install: cannot find %s/tr\n' "$source_dir" >&2
     exit 1
 fi
 mkdir -p -- "$prefix/bin"
@@ -20,5 +20,5 @@ else
     cp -- "$source_dir/tr" "$destination"
     chmod -- 755 "$destination"
 fi
-printf '已安装：%s\n' "$destination"
-printf '请确保 %s/bin 在 PATH 中。\n' "$prefix"
+printf 'Installed: %s\n' "$destination"
+printf 'Make sure %s/bin is on PATH.\n' "$prefix"

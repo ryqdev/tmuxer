@@ -116,7 +116,7 @@ test_tty_other() {
 }
 test_errors_help() {
     assert_status 2 run_tr -H
-    assert_contains "$CASE/err" '-H 缺少主机参数'
+    assert_contains "$CASE/err" '-H requires a host argument'
     assert_status 2 run_tr -H ''
     assert_status 2 run_tr -H --help
     assert_status 2 run_tr -H all
@@ -248,7 +248,7 @@ test_preview_remote() {
 test_cancel_empty_missing_fzf() {
     export TR_HOSTS=
     assert_status 1 run_tr
-    assert_contains "$CASE/err" '没有找到'
+    assert_contains "$CASE/err" 'no available sessions found'
     [ ! -e "$MOCK_LOG/fzf" ]
     assert_clean
     write_row local 'one:1:0'
@@ -258,7 +258,7 @@ test_cancel_empty_missing_fzf() {
     rm "$CASE/bin/fzf"
     minimal_path
     assert_status 2 run_tr
-    assert_contains "$CASE/err" '需要 fzf'
+    assert_contains "$CASE/err" 'requires fzf'
     assert_status 0 run_tr ls
     assert_clean
 }
@@ -338,5 +338,5 @@ for test in $tests; do
     fi
 done
 printf '\n%d passed, %d failed (%s)\n' "$passed" "$failed" "$TEST_BASH"
-printf 'SSH、远程 tmux 和 fzf 使用模拟；PTY 使用 script(1)，real_tmux 使用真实本机 tmux。\n'
+printf 'SSH, remote tmux, and fzf are mocked; PTY tests use script(1), and real_tmux uses local tmux.\n'
 [ "$failed" -eq 0 ]
