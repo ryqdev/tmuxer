@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 printf '%q\n' "$@" >> "$MOCK_LOG/tmux.${MOCK_HOST:-local}"
+if [ "${MOCK_READ_STDIN-}" = 1 ]; then
+    cat > "$MOCK_LOG/stdin.${MOCK_HOST:-local}"
+fi
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -L|-S|-f|-c|-T) shift; [ "$#" -eq 0 ] || shift ;;
