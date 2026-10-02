@@ -145,9 +145,9 @@ test_non_tty() {
     write_ssh_hosts box
     run_tr hosts register box > /dev/null
     local command
-    for command in attach attach-session a at new new-session ls capture-pane send-keys ''; do
+    for command in attach attach-session a at new new-session ls capture-pane send-keys; do
         clear_logs
-        if [ -n "$command" ]; then run_tr remote @box "$command" </dev/null; else run_tr remote @box </dev/null; fi
+        run_tr remote @box "$command" </dev/null
         assert_contains "$MOCK_LOG/ssh.box" '-T'
     done
     run_tr remote @box capture-pane -p | awk '{print}' > "$CASE/piped"
@@ -193,7 +193,8 @@ test_errors_help() {
     assert_contains "$CASE/err" 'run: tx hosts help'
     assert_status 2 run_tr help extra
     assert_status 0 run_tr help
-    assert_contains "$CASE/out" 'tx remote [@host] [tmux arguments...]'
+    assert_contains "$CASE/out" 'tx remote @host [tmux arguments...]'
+    assert_contains "$CASE/out" 'Select a session across registered SSH hosts'
     assert_contains "$CASE/out" 'tx hosts register host'
     assert_contains "$CASE/out" 'tx hosts delete host'
     assert_contains "$CASE/out" 'tx hosts list'
@@ -502,12 +503,14 @@ test_register_config_path() {
     run_tr hosts list > "$CASE/out"
     printf '%s\n' box dev staging > "$CASE/expected"
     diff -u "$CASE/expected" "$CASE/out"
-    export MOCK_PICK=dev
-    run_tty remote ls
+    write_row dev 'work:1:0'
+    export MOCK_PICK=$'dev\twork\t1\tdetached'
+    run_tty remote
+    printf '%s\n' "$MOCK_PICK" > "$CASE/expected"
     diff -u "$CASE/expected" "$MOCK_LOG/fzf-input"
-    assert_args "$MOCK_LOG/tmux.dev" ls
-    [ ! -e "$MOCK_LOG/ssh.box" ]
-    [ ! -e "$MOCK_LOG/ssh.staging" ]
+    assert_args "$MOCK_LOG/tmux.dev" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' attach -t '=work'
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_args "$MOCK_LOG/tmux.staging" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
     assert_clean
 }
 test_register_io_errors() {
@@ -515,7 +518,7 @@ test_register_io_errors() {
     mkdir -p "$HOME/.config/tmuxer/hosts"
     assert_status 2 run_tr hosts register box
     assert_contains "$CASE/err" 'cannot read allow list'
-    assert_status 2 run_tr remote ls
+    assert_status 2 run_tr remote
     assert_contains "$CASE/err" 'cannot read allow list'
     assert_status 2 run_tr hosts list
     assert_contains "$CASE/err" 'cannot read allow list'
@@ -526,7 +529,7 @@ test_register_io_errors() {
     rm "$HOME/.config/tmuxer"
     mkdir "$HOME/.config/tmuxer"
     printf 'valid\nbad host\n' > "$HOME/.config/tmuxer/hosts"
-    assert_status 2 run_tr remote ls
+    assert_status 2 run_tr remote
     assert_contains "$CASE/err" 'invalid host'
     assert_status 2 run_tr hosts list
     assert_contains "$CASE/err" 'invalid host'
@@ -677,11 +680,12 @@ test_delete_revokes_access() {
     assert_status 2 run_tr remote @dev ls
     assert_contains "$CASE/err" 'host is not registered: dev'
     assert_no_ssh
-    export MOCK_PICK=box
-    run_tty remote ls
-    printf 'box\n' > "$CASE/expected"
+    write_row box 'work:1:0'
+    export MOCK_PICK=$'box\twork\t1\tdetached'
+    run_tty remote
+    printf '%s\n' "$MOCK_PICK" > "$CASE/expected"
     diff -u "$CASE/expected" "$MOCK_LOG/fzf-input"
-    assert_args "$MOCK_LOG/tmux.box" ls
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' attach -t '=work'
     [ ! -e "$MOCK_LOG/ssh.dev" ]
 }
 test_allowlist_picker() {
@@ -695,7 +699,7 @@ CONFIG
     write_row local 'local session:1:0'
     export TR_HOSTS='dev ignored included'
     # SSH candidates and local sessions cannot populate an absent allow list.
-    assert_status 1 run_tr remote ls
+    assert_status 1 run_tr remote
     assert_contains "$CASE/err" 'no registered hosts available'
     assert_no_ssh
     assert_no_local_tmux
@@ -704,12 +708,14 @@ CONFIG
     printf 'outside-config\n' >> "$HOME/.config/tmuxer/hosts"
     clear_logs
     unset TR_HOSTS
-    export MOCK_PICK=dev
-    run_tty remote ls
-    printf '%s\n' dev outside-config > "$CASE/expected"
+    write_row dev 'work:1:0'
+    write_row outside-config 'legacy:2:1'
+    export MOCK_PICK=$'dev\twork\t1\tdetached'
+    run_tty remote
+    printf '%s\n' "$MOCK_PICK" $'outside-config\tlegacy\t2\tattached' > "$CASE/expected"
     diff -u "$CASE/expected" "$MOCK_LOG/fzf-input"
-    assert_args "$MOCK_LOG/tmux.dev" ls
-    [ ! -e "$MOCK_LOG/ssh.outside-config" ]
+    assert_args "$MOCK_LOG/tmux.dev" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' attach -t '=work'
+    assert_args "$MOCK_LOG/tmux.outside-config" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
     [ ! -e "$MOCK_LOG/ssh.ignored" ]
     [ ! -e "$MOCK_LOG/ssh.included" ]
     assert_no_local_tmux
@@ -719,17 +725,20 @@ CONFIG
 test_hosts_filter() {
     write_ssh_hosts ignored alpha beta gamma excluded
     run_tr hosts register alpha beta gamma excluded > /dev/null
-    export TR_HOSTS=$'alpha beta alpha\ngamma\tunregistered star*' MOCK_PICK=beta
-    run_tty remote ls
-    printf '%s\n' alpha beta gamma > "$CASE/expected"
+    write_row alpha 'one:1:0'
+    write_row beta 'two:2:1'
+    write_row gamma 'three:3:0'
+    export TR_HOSTS=$'alpha beta alpha\ngamma\tunregistered star*' MOCK_PICK=$'beta\ttwo\t2\tattached'
+    run_tty remote
+    printf '%s\n' $'alpha\tone\t1\tdetached' "$MOCK_PICK" $'gamma\tthree\t3\tdetached' > "$CASE/expected"
     diff -u "$CASE/expected" "$MOCK_LOG/fzf-input"
-    assert_args "$MOCK_LOG/tmux.beta" ls
-    [ ! -e "$MOCK_LOG/ssh.alpha" ]
-    [ ! -e "$MOCK_LOG/ssh.gamma" ]
+    assert_args "$MOCK_LOG/tmux.beta" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' attach -t '=two'
+    assert_args "$MOCK_LOG/tmux.alpha" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_args "$MOCK_LOG/tmux.gamma" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
     [ ! -e "$MOCK_LOG/ssh.excluded" ]
     clear_logs
     export TR_HOSTS=
-    assert_status 1 run_tr remote ls
+    assert_status 1 run_tr remote
     assert_no_ssh
     assert_no_local_tmux
     # Explicit references may still use any registered host.
@@ -783,65 +792,99 @@ test_select_nested() {
 }
 test_select_host() {
     unset TR_HOSTS
-    write_ssh_hosts box dead password
-    run_tr hosts register box dead password > /dev/null
-    # All registered hosts are offered, including hosts without sessions.
-    export MOCK_PICK=box
+    write_ssh_hosts box other empty dead password barrier-a barrier-b
+    run_tr hosts register box other empty dead password barrier-a barrier-b > /dev/null
+    write_row local 'local-only:1:0'
+    write_row box $'work:2:1\nsecond:3:0'
+    write_row other 'work:1:0'
+    write_row barrier-a 'parallel-a:1:0'
+    write_row barrier-b 'parallel-b:1:0'
+    export MOCK_PICK=$'box\twork\t2\tattached' MOCK_BARRIER=1 TMUX='fake,123,0' MOCK_EXPECT_CLEAN=1
     run_tty remote
-    printf '%s\n' box dead password > "$CASE/expected"
+    printf '%s\n' "$MOCK_PICK" $'box\tsecond\t3\tdetached' $'other\twork\t1\tdetached' \
+        $'barrier-a\tparallel-a\t1\tdetached' $'barrier-b\tparallel-b\t1\tdetached' > "$CASE/expected"
     diff -u "$CASE/expected" "$MOCK_LOG/fzf-input"
-    assert_args "$MOCK_LOG/tmux.box"
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' attach -t '=work'
+    assert_args "$MOCK_LOG/tmux.other" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_args "$MOCK_LOG/tmux.empty" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_contains "$MOCK_LOG/ssh.box" 'BatchMode=yes'
+    assert_contains "$MOCK_LOG/ssh.dead" 'ConnectTimeout=3'
+    assert_contains "$MOCK_LOG/ssh.password" 'ConnectionAttempts=1'
     assert_contains "$MOCK_LOG/ssh.box" '-t'
-    [ ! -e "$MOCK_LOG/ssh.dead" ]
-    [ ! -e "$MOCK_LOG/ssh.password" ]
+    [ -f "$MOCK_LOG/ready.barrier-a" ] && [ -f "$MOCK_LOG/ready.barrier-b" ]
+    assert_no_local_tmux
+    assert_clean
+}
+test_select_specific_host() {
+    selector_fixture
+    write_ssh_hosts box other
+    run_tr hosts register other > /dev/null
+    # Explicit host selection bypasses TR_HOSTS and never touches another server.
+    export TR_HOSTS= TMUX='fake,123,0' MOCK_PICK=$'box\t'"$SESSION"$'\t2\tattached'
+    run_tty remote @box
+    printf '%s\n' "$MOCK_PICK" > "$CASE/expected"
+    diff -u "$CASE/expected" "$MOCK_LOG/fzf-input"
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' attach -t "=$SESSION"
+    local quote_expected_scan="'tmux' 'list-sessions' '-F' '#{session_name}:#{session_windows}:#{session_attached}'"
+    local quoted_session=${SESSION//\'/\'\\\'\'}
+    assert_args "$MOCK_LOG/ssh.box" -T -- box "$quote_expected_scan" -t -- box "'tmux' 'attach' '-t' '=$quoted_session'"
+    [ ! -e "$MOCK_LOG/ssh.other" ]
     assert_no_local_tmux
     assert_clean
 }
 test_select_revoked() {
     write_ssh_hosts box
     run_tr hosts register box > /dev/null
-    export MOCK_REVOKE_REGISTRATION=1 MOCK_PICK=box
-    assert_status 2 run_tty remote new-session -s work
+    write_row box 'work:1:0'
+    export MOCK_REVOKE_REGISTRATION=1 MOCK_PICK=$'box\twork\t1\tdetached'
+    assert_status 2 run_tty remote @box
     assert_contains "$CASE/tty-output" 'host is not registered: box'
-    assert_no_ssh
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
     assert_no_local_tmux
     assert_clean
 }
 test_select_tmux_args() {
     write_ssh_hosts box ls
     run_tr hosts register box ls > /dev/null
-    export MOCK_PICK=box
-    run_tty remote ls
-    assert_args "$MOCK_LOG/tmux.box" ls
-    [ ! -e "$MOCK_LOG/ssh.ls" ]
-    assert_contains "$MOCK_LOG/fzf" 'Run:'
-    clear_logs
-    run_tty remote new-session -s '@work'
+    # Any remote command, including the old wrapper commands, requires @host.
+    local command
+    for command in ls box exec sessions select register delete help --help; do
+        assert_status 2 run_tr remote "$command"
+        assert_contains "$CASE/err" 'require a server reference'
+    done
+    assert_status 2 run_tty remote new-session -s work
+    assert_status 2 run_tty remote -L socket ls
+    assert_no_ssh
+    assert_no_local_tmux
+    [ ! -e "$MOCK_LOG/fzf" ]
+    run_tty remote @box new-session -s '@work'
     assert_args "$MOCK_LOG/tmux.box" new-session -s '@work'
     assert_contains "$MOCK_LOG/ssh.box" '-t'
     clear_logs
-    run_tty remote -vLsocket -S '/tmp/a b' -- send-keys -H '@target' '' 'a"b' '$HOME; $(touch nope)' $'two\nlines'
+    run_tty remote @box -vLsocket -S '/tmp/a b' -- send-keys -H '@target' '' 'a"b' '$HOME; $(touch nope)' $'two\nlines'
     assert_args "$MOCK_LOG/tmux.box" -vLsocket -S '/tmp/a b' -- send-keys -H '@target' '' 'a"b' '$HOME; $(touch nope)' $'two\nlines'
     assert_contains "$MOCK_LOG/ssh.box" '-T'
     [ ! -e "$CASE/nope" ]
     clear_logs
-    # Bare names and former wrapper subcommands are tmux arguments, not hosts.
-    run_tty remote box ls
+    # Arguments after @host are always forwarded, including former subcommands.
+    run_tty remote @box box ls
     assert_args "$MOCK_LOG/tmux.box" box ls
     clear_logs
-    run_tty remote exec box ls
+    run_tty remote @box exec box ls
     assert_args "$MOCK_LOG/tmux.box" exec box ls
     clear_logs
-    run_tty remote sessions
+    run_tty remote @box sessions
     assert_args "$MOCK_LOG/tmux.box" sessions
     assert_no_local_tmux
+    [ ! -e "$MOCK_LOG/fzf" ]
 }
 test_select_noninteractive() {
     write_ssh_hosts box
     run_tr hosts register box > /dev/null
-    assert_status 2 run_tr remote ls
+    assert_status 2 run_tr remote
     assert_contains "$CASE/err" 'requires an interactive terminal'
-    assert_contains "$CASE/err" 'tx remote @host'
+    assert_contains "$CASE/err" 'tx remote @host ls'
+    assert_status 2 run_tr remote @box
     [ ! -e "$MOCK_LOG/fzf" ]
     assert_no_ssh
     run_tr remote @box ls
@@ -850,28 +893,36 @@ test_select_noninteractive() {
 test_select_invalid() {
     write_ssh_hosts box excluded
     run_tr hosts register box excluded > /dev/null
-    export TR_HOSTS=box MOCK_PICK=box MOCK_FORCE_PICK=excluded
-    assert_status 2 run_tty remote ls
-    assert_contains "$CASE/tty-output" 'fzf returned an invalid host'
-    assert_no_ssh
-    export MOCK_FORCE_PICK=$'box\nexcluded'
-    assert_status 2 run_tty remote ls
-    assert_no_ssh
+    write_row box 'work:1:0'
+    export TR_HOSTS=box MOCK_PICK=$'box\twork\t1\tdetached'
+    local forced
+    for forced in $'excluded\twork\t1\tdetached' $'box\tinvented\t1\tdetached' $'[local]\twork\t1\tdetached' $'box\twork\t1\tdetached\nbox\twork\t1\tdetached'; do
+        clear_logs
+        export MOCK_FORCE_PICK=$forced
+        assert_status 2 run_tty remote
+        assert_contains "$CASE/tty-output" 'fzf returned an invalid session'
+        assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+        [ ! -e "$MOCK_LOG/ssh.excluded" ]
+        assert_no_local_tmux
+        assert_clean
+    done
     unset MOCK_FORCE_PICK
     export MOCK_EMPTY_PICK=1
-    assert_status 1 run_tty remote ls
-    assert_no_ssh
+    clear_logs
+    assert_status 1 run_tty remote
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
 }
 test_select_stdin() {
     write_ssh_hosts box
     run_tr hosts register box > /dev/null
-    export MOCK_PICK=box MOCK_READ_STDIN=1 TTY_STDIN="$CASE/command input"
+    export MOCK_READ_STDIN=1 TTY_STDIN="$CASE/command input"
     printf '%s\n' 'stdin for tmux' '$HOME; $(touch nope)' > "$TTY_STDIN"
-    run_tty remote load-buffer -
+    run_tty remote @box load-buffer -
     assert_args "$MOCK_LOG/tmux.box" load-buffer -
     diff -u "$TTY_STDIN" "$MOCK_LOG/stdin.box"
     assert_contains "$MOCK_LOG/ssh.box" '-T'
     assert_no_local_tmux
+    [ ! -e "$MOCK_LOG/fzf" ]
 }
 test_remote_user_reference() {
     write_ssh_hosts user@2001:db8::1 @box
@@ -891,6 +942,49 @@ test_preview_local() {
     assert_no_ssh
     assert_clean
 }
+test_preview_remote() {
+    selector_fixture
+    export MOCK_RUN_PREVIEW=1 MOCK_PICK=$'box\t'"$SESSION"$'\t2\tattached'
+    run_tty remote
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' capture-pane -p -t "=$SESSION:" -S -100 attach -t "=$SESSION"
+    assert_contains "$MOCK_LOG/preview-output" 'mock pane contents'
+    assert_no_local_tmux
+    assert_clean
+    clear_logs
+    run_tty remote @box
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}' capture-pane -p -t "=$SESSION:" -S -100 attach -t "=$SESSION"
+    assert_contains "$MOCK_LOG/preview-output" 'mock pane contents'
+    assert_no_local_tmux
+    assert_clean
+    clear_logs
+    export MOCK_REVOKE_REGISTRATION=1
+    assert_status 2 run_tty remote @box
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_clean
+}
+test_remote_empty_errors() {
+    write_ssh_hosts box empty dead password
+    run_tr hosts register box empty dead password > /dev/null
+    assert_status 1 run_tty remote
+    assert_contains "$CASE/tty-output" 'no available sessions found'
+    assert_no_local_tmux
+    [ ! -e "$MOCK_LOG/fzf" ]
+    assert_clean
+    clear_logs
+    assert_status 1 run_tty remote @empty
+    assert_contains "$CASE/tty-output" 'no available sessions found'
+    assert_args "$MOCK_LOG/tmux.empty" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_clean
+    clear_logs
+    assert_status 255 run_tty remote @dead
+    [ ! -e "$MOCK_LOG/fzf" ]
+    assert_clean
+    clear_logs
+    export MOCK_TMUX_STATUS=37
+    assert_status 37 run_tty remote @box
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
+    assert_clean
+}
 
 test_cancel_empty_missing_fzf() {
     assert_status 1 run_tr
@@ -906,11 +1000,12 @@ test_cancel_empty_missing_fzf() {
     clear_logs
     mkdir -p "$HOME/.config/tmuxer"
     : > "$HOME/.config/tmuxer/hosts"
-    assert_status 1 run_tr remote ls
+    assert_status 1 run_tr remote
     assert_no_local_tmux
     assert_no_ssh
     write_ssh_hosts box
     run_tr hosts register box > /dev/null
+    write_row box 'remote-one:1:0'
     export TR_HOSTS=
     assert_status 1 run_tr remote
     assert_no_ssh
@@ -918,17 +1013,20 @@ test_cancel_empty_missing_fzf() {
     export MOCK_CANCEL=1
     assert_status 130 run_tr
     clear_logs
-    assert_status 130 run_tty remote new-session -s work
-    assert_no_ssh
+    assert_status 130 run_tty remote
+    assert_args "$MOCK_LOG/tmux.box" list-sessions -F '#{session_name}:#{session_windows}:#{session_attached}'
     assert_no_local_tmux
+    assert_clean
+    clear_logs
     rm "$CASE/bin/fzf"
     minimal_path
     assert_status 2 run_tr
     assert_contains "$CASE/err" 'requires fzf'
     assert_contains "$CASE/err" 'tx ls'
-    assert_status 2 run_tty remote ls
+    assert_status 2 run_tty remote
     assert_contains "$CASE/tty-output" 'requires fzf'
     assert_contains "$CASE/tty-output" 'tx remote @host'
+    assert_no_ssh
     assert_status 0 run_tr remote @box ls
     assert_status 0 run_tr ls
     assert_clean
@@ -1034,7 +1132,7 @@ test_real_tmux() {
     assert_contains "$MOCK_LOG/fzf-input" "$MOCK_PICK"
     assert_contains "$MOCK_LOG/preview-output" 'TR_REAL_OK'
     assert_clean
-    assert_status 1 run_tr remote ls
+    assert_status 1 run_tr remote
     assert_contains "$CASE/err" 'no registered hosts available'
     run_tr kill-session -t "=$session"
     assert_status 1 run_tr ls
@@ -1064,7 +1162,7 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/tr-tests.XXXXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 export WORK TEST_BASH ORIGINAL_PATH REAL_TMUX
-tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_reference_names remote_user_reference hosts_list candidates_empty candidates_aliases candidates_includes candidates_errors register register_concurrent register_invalid register_candidates register_candidates_empty register_candidates_includes register_candidates_errors register_legacy_hosts register_config_path register_io_errors delete delete_invalid delete_config_path delete_io_errors delete_concurrent delete_revokes_access allowlist_picker hosts_filter unregistered_remote select_local select_nested select_host select_revoked select_tmux_args select_noninteractive select_invalid select_stdin preview_local cancel_empty_missing_fzf script_path_spaces install zsh_completion real_tmux'
+tests='local_forward local_default local_namespace remote_quotes exit_status global_options non_tty tty_attach tty_other errors_help remote_reference_names remote_user_reference hosts_list candidates_empty candidates_aliases candidates_includes candidates_errors register register_concurrent register_invalid register_candidates register_candidates_empty register_candidates_includes register_candidates_errors register_legacy_hosts register_config_path register_io_errors delete delete_invalid delete_config_path delete_io_errors delete_concurrent delete_revokes_access allowlist_picker hosts_filter unregistered_remote select_local select_nested select_host select_specific_host select_revoked select_tmux_args select_noninteractive select_invalid select_stdin preview_local preview_remote remote_empty_errors cancel_empty_missing_fzf script_path_spaces install zsh_completion real_tmux'
 passed=0
 failed=0
 for test in $tests; do
