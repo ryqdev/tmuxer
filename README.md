@@ -1,13 +1,14 @@
 # tx
 
-Use `tx` for local tmux and `tx remote` for tmux on a registered SSH server. A leading `@host` is a server reference: `tx remote @dev ls` runs `tmux ls` on `dev`. Omit the reference to choose a server with fzf, then run the same tmux command.
+Use `tx` to select a local tmux session with fzf, and `tx remote` to select a session across registered SSH servers. `tx remote @dev` opens the same session picker for `dev` alone. With tmux arguments, `tx ls` runs local `tmux ls` and `tx remote @dev ls` runs `tmux ls` on `dev`.
 
 | Command | Usage |
 | --- | --- |
 | `tx` | Select a local session with a pane preview (requires fzf) |
 | `tx [tmux arguments...]` | Run a tmux command locally |
-| `tx remote @host [tmux arguments...]` | Run tmux on the referenced registered server |
-| `tx remote [tmux arguments...]` | Select a registered server, then run tmux (requires fzf and an interactive terminal) |
+| `tx remote` | Select a session across registered servers with a pane preview |
+| `tx remote @host` | Select a session on one registered server with a pane preview |
+| `tx remote @host <tmux arguments...>` | Run tmux on the referenced registered server |
 | `tx hosts list` | List registered servers without connecting |
 | `tx hosts candidates` | List SSH aliases available for registration |
 | `tx hosts register <host> [host ...]` | Add configured SSH aliases to the persistent allow list |
@@ -15,22 +16,22 @@ Use `tx` for local tmux and `tx remote` for tmux on a registered SSH server. A l
 | `tx hosts help` | Show host management help |
 | `tx help` | Show help |
 
-Only the first argument immediately after `remote` can be a server reference. Remove its leading `@` to get the exact registered destination; everything else is passed unchanged to tmux. This keeps server names distinct from tmux commands, including when a server is named `ls`:
+Every remote tmux command requires a server reference immediately after `remote`. Remove its leading `@` to get the exact registered destination; everything after the reference is passed unchanged to tmux. This keeps server names distinct from tmux commands, including when a server is named `ls`:
 
 ```bash
 tx remote @ls ls   # Run tmux ls on the server named ls
-tx remote ls       # Choose a server, then run tmux ls
+tx remote ls       # Error: a command requires @host
 ```
 
-Bare server names are tmux arguments, so use `@dev`, rather than `dev`, to reference a server. References in later arguments, such as a tmux target or an argument to `send-keys`, remain untouched. Legacy destinations containing `@` also work: `@user@dev` references the registered destination `user@dev`, and `@@dev` references `@dev`.
+Use `@dev` to reference a server; `tx remote dev` is an error. References in later arguments, such as a tmux target or an argument to `send-keys`, remain untouched. Legacy destinations containing `@` also work: `@user@dev` references the registered destination `user@dev`, and `@@dev` references `@dev`.
 
-With no tmux arguments, `tx remote @dev` runs the remote tmux default command. Bare `tx remote` chooses a server first, then runs that same default command. Neither form scans remote sessions or automatically selects an existing session. Use `tx remote @dev attach -t work` to attach to a known session.
+With no tmux arguments, `tx remote @dev` lists existing sessions on `dev` in fzf and attaches to the selected session. Bare `tx remote` lists sessions across registered servers in one picker, with the server name on each row. Both require local fzf and an interactive terminal. Use `tx remote @dev attach -t work` to attach directly to a known session, or `tx remote @dev new-session -s work` to create one.
 
-Bare `tx` still selects an existing local session. Except for `help`, `hosts`, and `remote`, arguments are passed unchanged to local tmux. Local commands and selection do not read the remote allow list or require SSH. Explicit local tmux commands and remote commands with `@host` do not require fzf.
+Bare `tx` still selects an existing local session. Except for `help`, `hosts`, and `remote`, arguments are passed unchanged to local tmux. Local commands and selection do not read the remote allow list or require SSH. Explicit local tmux commands and `tx remote @host` with tmux arguments do not require fzf.
 
 ## Installation
 
-Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf for local session selection and remote server selection. Host registration, deletion, and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
+Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf locally for session selection; remote servers do not need fzf or this wrapper. Host registration, deletion, and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
 
 ```bash
 git clone https://github.com/ryqdev/tmuxer.git
@@ -60,7 +61,7 @@ source "$HOME/.local/share/tmuxer/tx.zsh" tx
 
 Run the same `source` command in your current shell to enable it immediately. For a custom `PREFIX` or `NAME`, use the exact command printed by the installer.
 
-Tab completes `tx remote @de` to `tx remote @dev`, SSH aliases after `hosts register`, registered hosts after `hosts delete`, and host management subcommands. Server reference completion reads the local allow list without connecting over SSH and is independent of `TR_HOSTS`. Local and remote tmux commands reuse Zsh's tmux command and option completion, including after `@host`. Dynamic session and target suggestions come from the local tmux completer, not from the remote server.
+Tab completes `tx remote @de` to `tx remote @dev`, SSH aliases after `hosts register`, registered hosts after `hosts delete`, and host management subcommands. Server reference completion reads the local allow list without connecting over SSH and is independent of `TR_HOSTS`. Local commands and remote commands after `@host` reuse Zsh's tmux command and option completion. Commands without a remote reference are not suggested. Dynamic session and target suggestions come from the local tmux completer, not from the remote server.
 
 ### Upgrading from tr
 
@@ -81,19 +82,21 @@ Existing allow-list files continue to work. Host management now lives under `hos
 | Previous command | New command |
 | --- | --- |
 | `tx remote exec dev ls` | `tx remote @dev ls` |
-| `tx remote exec dev` | `tx remote @dev` |
+| `tx remote exec dev` (tmux default command) | `tx remote @dev new-session` |
 | `tx remote register dev` | `tx hosts register dev` |
 | `tx remote delete dev` | `tx hosts delete dev` |
 | `tx remote list` | `tx hosts list` |
 | `tx remote candidates` | `tx hosts candidates` |
 | `tx remote help` | `tx help` |
-| `tx remote` / `tx remote select` (session picker) | `tx remote` now selects a server and runs its tmux default command |
-| `tx remote sessions` (cross-server summary) | `tx remote ls` selects one server; use `tx remote @dev ls` to query a specific server |
+| `tx remote select` | `tx remote` selects a session across registered servers |
+| `tx remote sessions` (cross-server summary) | `tx remote` for interactive selection; `tx remote @dev ls` to list one server |
+| `tx remote ls` / `tx remote new-session ...` (server picker) | Add a reference: `tx remote @dev ls` / `tx remote @dev new-session ...` |
+| `tx remote @dev` (tmux default command) | Now selects an existing session; use `tx remote @dev new-session` to create one |
 | `tx -H dev ls` / `tx remote -H dev ls` | `tx remote @dev ls` |
 | `tx register dev` | `tx hosts register dev` |
 | `tx --help` / `tx remote --help` | `tx help` |
 
-The remote `exec`, `sessions`, and `select` wrapper subcommands have been removed. `remote` now passes all arguments after the optional leading reference to tmux, including former wrapper subcommands. Update scripts to use the new forms. Cross-server session discovery and summaries have been removed; `tx remote ls` executes on exactly one chosen server. Local `tx` session selection is unchanged.
+The remote `exec`, `sessions`, and `select` wrapper subcommands remain removed. Only bare `tx remote` can omit a server reference. After `@host`, every argument goes to tmux, including former wrapper subcommands. Local session selection and command forwarding are unchanged.
 
 ## Examples
 
@@ -109,16 +112,15 @@ tx hosts candidates
 tx hosts register dev staging
 tx hosts list
 
+# Select an existing remote session
+tx remote
+tx remote @dev
+
 # Run tmux on a specific server
 tx remote @dev ls
 tx remote @dev new-session -s work
 tx remote @dev attach -t '=work'
 tx remote @dev kill-session -t '=work'
-
-# Omit the reference to choose a server first
-tx remote
-tx remote ls
-tx remote new-session -s work
 
 # Send input and capture pane output
 tx remote @dev send-keys -t '=work:' 'echo hello' Enter
@@ -128,12 +130,14 @@ printf '%s\n' 'buffer contents' | tx remote @dev load-buffer -
 # Put tmux global options before the tmux subcommand
 tx -L project ls
 tx remote @dev -S /path/to/socket ls
-tx remote -L project ls
+tx remote @dev -L project ls
 ```
 
-The remote server picker uses the local registration list and does not connect to servers before selection. Servers without sessions, offline servers, and servers requiring a password are still offered. Only the selected server receives the tmux command; SSH uses your normal configuration and authentication.
+All session pickers show the host, session name, window count, attached/detached state, and the last 100 lines of a pane preview. Local selection switches clients when already inside tmux and attaches otherwise. Remote selection always connects over SSH and attaches to the chosen server's session.
 
-The picker shows the command to run and requires fzf and an interactive terminal. It preserves stdin for tmux and keeps the command's stdout available for piping or redirection. Cancelling exits without connecting (Escape/Ctrl-C returns status 130). An absent or empty registration list, or an empty `TR_HOSTS` filter, reports no available registered hosts and exits with status 1. Without an interactive terminal, specify `@host`; the command reports this requirement and exits with status 2. Invalid or unregistered references also fail before connecting.
+`tx remote` queries registered servers concurrently, without querying local sessions. Discovery uses noninteractive SSH authentication with a three-second connection timeout and one connection attempt. Unreachable servers, servers requiring interactive authentication, and servers with no sessions contribute no rows. `tx remote @dev` queries only `dev`, allows normal SSH authentication, and reports SSH/tmux errors with their exit status. Remote previews use noninteractive SSH authentication; interactive authentication alone does not support previews. Explicit tmux commands use your normal SSH configuration and authentication, preserve stdin, and keep stdout available for piping or redirection.
+
+Cancelling a picker exits without attaching (Escape/Ctrl-C returns status 130), although remote discovery and previews may already have connected. An absent or empty registration list, or an empty `TR_HOSTS` filter, reports no available registered hosts and exits with status 1. A picker with no available sessions also exits with status 1. Missing fzf, a noninteractive remote picker, commands without `@host`, and invalid or unregistered references exit with status 2. Explicit tmux commands such as `tx remote @dev ls` work without fzf or an interactive terminal.
 
 ## Hosts
 
@@ -165,19 +169,20 @@ tx hosts register prod
 tx remote @prod ls
 ```
 
-Registration checks local configuration without connecting to the server; it does not verify reachability. Repeated registration does not add duplicates. Wildcards, whitespace, and the reserved name `all` are rejected. Existing allow-list entries remain available to `hosts list`, server selection, and explicit references even if they are absent from the current SSH candidates; registering them again requires a matching candidate. References must match the exact registered destination: `dev` and `user@dev` are separate entries.
+Registration checks local configuration without connecting to the server; it does not verify reachability. Repeated registration does not add duplicates. Wildcards, whitespace, and the reserved name `all` are rejected. Existing allow-list entries remain available to `hosts list`, remote session discovery, and explicit references even if they are absent from the current SSH candidates; registering them again requires a matching candidate. References must match the exact registered destination: `dev` and `user@dev` are separate entries.
 
 `tx hosts list` prints every registered destination once, in registration order, with one destination per line. It does not connect to servers and is not filtered by `TR_HOSTS`. An absent or empty allow list produces no output. SSH config entries are not automatically registered.
 
-Use `TR_HOSTS` to filter the server picker. Unregistered names are ignored; duplicates are removed:
+Use `TR_HOSTS` to filter the servers queried by bare `tx remote`. Unregistered names are ignored; duplicates are removed. Explicit references bypass the filter:
 
 ```bash
-TR_HOSTS="dev staging" tx remote ls
-TR_HOSTS="" tx remote ls            # No available hosts
-TR_HOSTS="dev" tx remote @prod ls   # Explicit references bypass the picker filter
+TR_HOSTS="dev staging" tx remote
+TR_HOSTS="" tx remote              # No available hosts
+TR_HOSTS="dev" tx remote @prod     # Select a session on prod
+TR_HOSTS="dev" tx remote @prod ls  # Run tmux ls on prod
 ```
 
-The picker rechecks registration after selection, before connecting. Removing a host while the picker is open revokes access.
+Remote previews and attaching after selection recheck registration. Removing a host while the picker is open prevents subsequent previews and attaching to that host.
 
 Remove one or more registered servers with:
 
@@ -189,5 +194,3 @@ tx hosts list
 `tx hosts delete` removes every occurrence of the exact destinations from the allow list, including legacy entries absent from SSH configuration. All names must be registered and syntactically valid; if any name is invalid or unknown, the entire deletion fails without changing the file. Deletion reads only the allow list and is independent of `TR_HOSTS`. Comments, blank lines, and the order of retained entries are preserved. The file is replaced atomically, with register/delete operations serialized to preserve concurrent changes.
 
 You can also edit the allow-list file directly. It contains one destination per line; blank lines and lines starting with `#` are ignored. The `@` reference prefix belongs to the command line, not to the stored alias.
-
-Local selection with bare `tx` shows session names, window counts, attached/detached state, and a pane preview. Selecting a session switches clients if already inside tmux, or attaches otherwise. If there are no local sessions, it exits with status 1.

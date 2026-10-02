@@ -7,7 +7,7 @@ _tx() {
 
     if (( CURRENT == 2 )); then
         subcommands=(
-            'remote:Run tmux on a registered server'
+            'remote:Select remote sessions or run tmux on a registered server'
             'hosts:Manage registered servers'
             'help:Show help'
         )
@@ -54,16 +54,13 @@ _tx() {
             hosts=("${(@)hosts/#/@}")
             _wanted hosts expl 'server reference' compadd -a hosts && ret=0
         fi
-        [[ $PREFIX == @* ]] && return ret
+        return ret
     fi
 
-    # Reuse tmux completion after removing the wrapper and optional reference.
-    local -i offset=1
-    if (( CURRENT > 3 )) && [[ $words[3] == @* ]]; then
-        offset=2
-    fi
-    local -a words=("$words[1]" "${(@)words[$((offset + 2)),-1]}")
-    local -i CURRENT=$(( CURRENT - offset ))
+    [[ $words[3] == @* ]] || return 1
+    # Reuse tmux completion only after the required server reference.
+    local -a words=("$words[1]" "${(@)words[4,-1]}")
+    local -i CURRENT=$(( CURRENT - 2 ))
     _tmux "$@" && ret=0
     return ret
 }
