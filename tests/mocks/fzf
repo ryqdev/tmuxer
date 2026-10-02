@@ -11,7 +11,9 @@ while IFS= read -r row || [ -n "$row" ]; do
     [ "$row" != "${MOCK_PICK-}" ] || selection=$row
 done
 [ "${MOCK_CANCEL-}" != 1 ] || exit 130
+[ "${MOCK_EMPTY_PICK-}" != 1 ] || exit 0
 [ -n "$selection" ] || exit 1
+if [ "${MOCK_FORCE_PICK+x}" = x ]; then selection=$MOCK_FORCE_PICK; fi
 if [ "${MOCK_REVOKE_REGISTRATION-}" = 1 ]; then
     : > "${XDG_CONFIG_HOME:-$HOME/.config}/tmuxer/hosts"
 fi
