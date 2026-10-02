@@ -1,28 +1,28 @@
 # tx
 
-Use `tx` like local tmux. Remote host management, SSH commands, and the cross-host session selector live under `tx remote`.
+Use `tx` to select a local tmux session and `tx remote` to select a session on a registered remote server. Remote host management and SSH commands also live under `tx remote`.
 
 tx operations use named subcommands and positional arguments. tmux's own arguments, such as `-s`, `-t`, `-L`, and `-S`, are passed through unchanged.
 
 | Command | Usage |
 | --- | --- |
-| `tx` | Run local tmux's default command (normally create and attach to a new session) |
+| `tx` | Select a local session with a pane preview (requires fzf) |
 | `tx <command> ...` | Run a tmux command locally |
-| `tx remote select` | Select a local or remote session with a pane preview (requires fzf) |
+| `tx remote` / `tx remote select` | Select a registered remote session with a pane preview (requires fzf) |
 | `tx remote list` | List all registered remote servers without connecting |
 | `tx remote candidates` | List SSH aliases from your SSH config that can be registered |
 | `tx remote register <host> [host ...]` | Add configured SSH aliases to the persistent allow list |
 | `tx remote delete <host> [host ...]` | Remove registered servers from the allow list |
 | `tx remote exec <host> [tmux arguments...]` | Run tmux on a registered SSH host |
-| `tx remote sessions [tmux global options...]` | List sessions across this machine and registered SSH hosts |
+| `tx remote sessions [tmux global options...]` | List sessions on registered SSH hosts |
 | `tx remote help` | Show remote command help |
 | `tx help` | Show help |
 
-Bare `tx remote` is also supported as shorthand for `tx remote select`. Except for the `help` and `remote` subcommands, arguments are passed unchanged to local tmux. Local commands do not read the remote allow list or require SSH or fzf.
+Bare `tx` scans local sessions only; bare `tx remote` is shorthand for `tx remote select` and scans registered remote servers only. Except for the `help` and `remote` subcommands, arguments are passed unchanged to local tmux. Local selection and commands do not read the remote allow list or require SSH. Explicit local tmux commands do not require fzf.
 
 ## Installation
 
-Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx remote select` interactive session selector. Host registration, deletion, and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
+Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf to use the `tx` and `tx remote` interactive session selectors. Host registration, deletion, and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
 
 ```bash
 git clone https://github.com/ryqdev/tmuxer.git
@@ -72,7 +72,8 @@ Existing allow-list files continue to work. Update commands and scripts as follo
 
 | Previous command | New command |
 | --- | --- |
-| `tx` (session selector) | `tx remote select` |
+| `tx` (combined session selector) | `tx` for local sessions; `tx remote` for remote sessions |
+| `tx` (tmux default command) | `tx new-session` |
 | `tx register dev` | `tx remote register dev` |
 | `tx -H dev ls` or `tx remote -H dev ls` | `tx remote exec dev ls` |
 | `tx -H all ls` or `tx remote -H all ls` | `tx remote sessions` |
@@ -80,7 +81,7 @@ Existing allow-list files continue to work. Update commands and scripts as follo
 | `tx --help` | `tx help` |
 | `tx remote --help` | `tx remote help` |
 
-The old top-level `register`, `-H`, and `--help` forms are passed to local tmux. `tx remote -H ...` and `tx remote --help` are rejected with a pointer to `tx remote help`. Bare `tx` uses local tmux's default command.
+The old top-level `register`, `-H`, and `--help` forms are passed to local tmux. `tx remote -H ...` and `tx remote --help` are rejected with a pointer to `tx remote help`. Bare `tx` selects an existing local session; use `tx new-session` to create one. Remote selectors and `tx remote sessions` exclude local sessions.
 
 ## Examples
 
@@ -94,6 +95,7 @@ tx attach -t '=work'
 # Remote sessions
 tx remote register dev
 tx remote list
+tx remote
 tx remote exec dev new-session -s work
 tx remote exec dev attach -t '=work'
 tx remote exec dev kill-session -t '=work'
@@ -154,7 +156,7 @@ Registration checks local configuration without connecting to the server; it doe
 
 `tx remote list` prints every registered destination once, in registration order, with one destination per line. It does not connect to servers and is not filtered by `TR_HOSTS`. An absent or empty allow list produces no output.
 
-Only registered servers are scanned by `tx remote select` and `tx remote sessions`. Local sessions are always included. An absent or empty allow list means local sessions only. `tx remote exec <host>` also requires the exact destination to be registered; `dev` and `user@dev` are separate entries.
+Only registered servers are scanned by `tx remote`, `tx remote select`, and `tx remote sessions`. An absent or empty allow list means no remote sessions: the selector reports no available sessions, and `remote sessions` prints only its header. Use `tx` to select local sessions. `tx remote exec <host>` also requires the exact destination to be registered; `dev` and `user@dev` are separate entries.
 
 SSH still uses your normal configuration to connect to registered aliases, but entries in `~/.ssh/config` are not automatically registered. Run `tx remote register` for the servers you want to discover.
 
@@ -162,11 +164,11 @@ Use `TR_HOSTS` to scan a subset of the allow list. Unregistered names in this va
 
 ```bash
 TR_HOSTS="dev staging" tx remote select
-TR_HOSTS="" tx remote select                 # Local sessions only
+TR_HOSTS="" tx remote select                 # No remote hosts scanned
 TR_HOSTS="dev staging" tx remote sessions
 ```
 
-Discovery uses noninteractive SSH and skips hosts that cannot connect, require a password prompt, or have no sessions. The interactive selector shows host, session name, window count, and attached/detached state with a pane preview. Selecting a local session switches clients if already inside tmux, or attaches otherwise; selecting a remote session attaches over SSH.
+Remote discovery uses noninteractive SSH and skips hosts that cannot connect, require a password prompt, or have no sessions. Both interactive selectors show host, session name, window count, and attached/detached state with a pane preview. Selecting a local session with `tx` switches clients if already inside tmux, or attaches otherwise; selecting a remote session with `tx remote` attaches over SSH. If the selected scope has no sessions, the selector reports no available sessions and exits with status 1.
 
 Remove one or more registered servers with:
 

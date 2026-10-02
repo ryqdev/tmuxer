@@ -21,4 +21,5 @@ if [ "${MOCK_RUN_PREVIEW-}" = 1 ]; then
     preview=${preview/\{\}/$quoted}
     /bin/sh -c "$preview" > "$MOCK_LOG/preview-output" || exit $?
 fi
+[ "${MOCK_CANCEL_AFTER_PREVIEW-}" != 1 ] || exit 130
 printf '%s\n' "$selection"

@@ -23,13 +23,13 @@ _tx() {
 
     if (( CURRENT == 3 )); then
         subcommands=(
-            'select:Select a local or remote session'
+            'select:Select a registered remote session'
             'list:List registered remote hosts'
             'candidates:List SSH aliases available for registration'
             'register:Register remote hosts'
             'delete:Remove hosts from the allow list'
             'exec:Run tmux on a registered host'
-            'sessions:List local and remote sessions'
+            'sessions:List registered remote sessions'
             'help:Show remote command help'
         )
         _describe -t commands 'remote command' subcommands
