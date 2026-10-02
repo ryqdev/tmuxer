@@ -15,16 +15,16 @@ usage() {
     printf '%s\n' \
         "Usage: $PROGRAM [tmux arguments...]" \
         "       $PROGRAM remote [subcommand]" \
-        "  $PROGRAM                         Equivalent to tmux (including its default command)" \
+        "  $PROGRAM                         Select a local session (requires fzf)" \
         "  $PROGRAM ls                      Equivalent to tmux ls" \
-        "  $PROGRAM remote                  Select a local or remote session (requires fzf)" \
-        "  $PROGRAM remote select           Select a local or remote session (requires fzf)" \
+        "  $PROGRAM remote                  Select a registered remote session (requires fzf)" \
+        "  $PROGRAM remote select           Select a registered remote session (requires fzf)" \
         "  $PROGRAM remote list             List registered remote hosts without connecting" \
         "  $PROGRAM remote candidates       List SSH aliases available for registration" \
         "  $PROGRAM remote register host [host ...]  Add SSH config aliases to the allow list" \
         "  $PROGRAM remote delete host [host ...]  Remove hosts from the allow list" \
         "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
-        "  $PROGRAM remote sessions         List local and registered remote sessions" \
+        "  $PROGRAM remote sessions         List registered remote sessions" \
         "  $PROGRAM remote help             Show remote command help" \
         "  $PROGRAM help                    Show help"
 }
@@ -32,17 +32,17 @@ usage() {
 remote_usage() {
     printf '%s\n' \
         "Usage: $PROGRAM remote [subcommand]" \
-        "  $PROGRAM remote                  Select a local or remote session (requires fzf)" \
-        "  $PROGRAM remote select           Select a local or remote session (requires fzf)" \
+        "  $PROGRAM remote                  Select a registered remote session (requires fzf)" \
+        "  $PROGRAM remote select           Select a registered remote session (requires fzf)" \
         "  $PROGRAM remote list             List every registered host, one per line" \
         "  $PROGRAM remote candidates       List SSH aliases available for registration" \
         "  $PROGRAM remote register host [host ...]  Add SSH config aliases to the allow list" \
         "  $PROGRAM remote delete host [host ...]  Remove hosts from the allow list" \
         "  $PROGRAM remote exec host [tmux arguments...]  Run tmux on a registered SSH host" \
-        "  $PROGRAM remote sessions [tmux global options...]  List local and remote sessions" \
+        "  $PROGRAM remote sessions [tmux global options...]  List registered remote sessions" \
         "  $PROGRAM remote help             Show help" \
         "Allow list: $HOSTS_FILE" \
-        'TR_HOSTS="a b c" filters registered hosts for discovery (empty means local only).'
+        'TR_HOSTS="a b c" filters registered hosts for discovery (empty means no remote hosts).'
 }
 
 fail() { printf '%s: %s\n' "$PROGRAM" "$*" >&2; exit 2; }
@@ -333,9 +333,10 @@ scan_one() {
 
 collect_sessions() {
     local index=0 host pid line
-    get_hosts
+    if [ "$1" = local ]; then HOSTS=("$LOCAL_HOST");
+    else get_hosts; fi
     SCAN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tr.XXXXXXXX") || fail 'cannot create temporary directory'
-    for host in "$LOCAL_HOST" "${HOSTS[@]}"; do
+    for host in "${HOSTS[@]}"; do
         scan_one "$host" > "$SCAN_DIR/$index" &
         SCAN_PIDS[${#SCAN_PIDS[@]}]=$!
         index=$((index + 1))
@@ -343,7 +344,7 @@ collect_sessions() {
     for pid in "${SCAN_PIDS[@]}"; do wait "$pid" || :; done
     SCAN_PIDS=()
     : > "$SCAN_DIR/sessions"
-    for ((index=0; index<=${#HOSTS[@]}; index++)); do
+    for ((index=0; index<${#HOSTS[@]}; index++)); do
         while IFS= read -r line || [ -n "$line" ]; do
             printf '%s\n' "$line" >> "$SCAN_DIR/sessions"
         done < "$SCAN_DIR/$index"
@@ -364,9 +365,11 @@ preview() {
 }
 
 select_session() {
-    local selection host session windows state script_path quoted_script status
-    command -v fzf >/dev/null 2>&1 || fail "interactive selection requires fzf; you can still run commands such as $PROGRAM remote sessions"
-    collect_sessions
+    local scope=$1 selection host session windows state script_path quoted_script status fallback
+    if [ "$scope" = local ]; then fallback="$PROGRAM ls";
+    else fallback="$PROGRAM remote sessions"; fi
+    command -v fzf >/dev/null 2>&1 || fail "interactive selection requires fzf; you can still run commands such as $fallback"
+    collect_sessions "$scope"
     if [ ! -s "$SCAN_DIR/sessions" ]; then
         printf '%s: no available sessions found\n' "$PROGRAM" >&2
         return 1
@@ -403,10 +406,11 @@ if [ "${1-}" = help ]; then
     [ "$#" -eq 1 ] || fail 'help does not accept arguments'
     usage; exit 0
 fi
+if [ "$#" -eq 0 ]; then select_session local; exit $?; fi
 if [ "${1-}" != remote ]; then cleanup; exec tmux "$@"; fi
 shift
 if [ "${TR_INTERNAL_PREVIEW-}" = 1 ]; then preview "${1-}"; exit $?; fi
-if [ "$#" -eq 0 ]; then select_session; exit $?; fi
+if [ "$#" -eq 0 ]; then select_session remote; exit $?; fi
 OPERATION=$1
 shift
 case "$OPERATION" in
@@ -415,7 +419,7 @@ case "$OPERATION" in
         remote_usage; exit 0 ;;
     select)
         [ "$#" -eq 0 ] || fail 'remote select does not accept arguments'
-        select_session; exit $? ;;
+        select_session remote; exit $? ;;
     register) register_hosts "$@"; exit 0 ;;
     delete) delete_hosts "$@"; exit 0 ;;
     list)
@@ -454,7 +458,7 @@ while [ "$#" -gt 0 ]; do
 done
 if [ "$OPERATION" = sessions ]; then
     [ "$#" -eq 0 ] || fail 'remote sessions only accepts tmux global options'
-    collect_sessions
+    collect_sessions remote
     printf 'HOST\tSESSION\tWINDOWS\tSTATE\n'
     while IFS= read -r line || [ -n "$line" ]; do printf '%s\n' "$line"; done < "$SCAN_DIR/sessions"
     exit 0
