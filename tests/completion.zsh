@@ -48,17 +48,18 @@ check_completion() {
 
 check_completion "$command_name rem" "$command_name remote"
 check_completion "$command_name hos" "$command_name hosts"
-for subcommand in candidates list register delete help; do
+for subcommand in candidates list register remove help; do
     check_completion "$command_name hosts ${subcommand[1,3]}" "$command_name hosts $subcommand"
 done
+check_completion "$command_name hosts del" "$command_name hosts del"
 check_completion "$command_name hosts register conf" "$command_name hosts register configured"
 check_completion "$command_name hosts register configured sec" "$command_name hosts register configured second"
 check_completion "$command_name remote @reg" "$command_name remote @registered"
 check_completion "$command_name remote @user@" "$command_name remote @user@2001:db8::1"
 check_completion "$command_name remote @conf" "$command_name remote @conf"
-check_completion "$command_name hosts delete reg" "$command_name hosts delete registered"
-check_completion "$command_name hosts delete registered user@" "$command_name hosts delete registered user@2001:db8::1"
-check_completion "$command_name hosts delete conf" "$command_name hosts delete conf"
+check_completion "$command_name hosts remove reg" "$command_name hosts remove registered"
+check_completion "$command_name hosts remove registered user@" "$command_name hosts remove registered user@2001:db8::1"
+check_completion "$command_name hosts remove conf" "$command_name hosts remove conf"
 check_completion "$command_name remote @registered new-s" "$command_name remote @registered new-session"
 check_completion "$command_name remote @registered -L socket new-s" "$command_name remote @registered -L socket new-session"
 check_completion "$command_name remote new-s" "$command_name remote new-s"

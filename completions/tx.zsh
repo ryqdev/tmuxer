@@ -28,7 +28,7 @@ _tx() {
                 'list:List registered servers'
                 'candidates:List SSH aliases available for registration'
                 'register:Register servers'
-                'delete:Remove registered servers'
+                'remove:Remove registered servers'
                 'help:Show host management help'
             )
             _describe -t commands 'hosts command' subcommands
@@ -39,7 +39,7 @@ _tx() {
                 hosts=("${(@f)$(command "$words[1]" hosts candidates 2>/dev/null)}")
                 [[ -n $hosts[1] ]] || return 1
                 _wanted hosts expl 'SSH alias' compadd -a hosts ;;
-            delete)
+            remove)
                 hosts=("${(@f)$(command "$words[1]" hosts list 2>/dev/null)}")
                 [[ -n $hosts[1] ]] || return 1
                 _wanted hosts expl 'registered host' compadd -a hosts ;;
