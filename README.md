@@ -12,7 +12,7 @@ Use `tx` to select a local tmux session with fzf, and `tx remote` to select a se
 | `tx hosts list` | List registered servers without connecting |
 | `tx hosts candidates` | List SSH aliases available for registration |
 | `tx hosts register <host> [host ...]` | Add configured SSH aliases to the persistent allow list |
-| `tx hosts delete <host> [host ...]` | Remove registered servers from the allow list |
+| `tx hosts remove <host> [host ...]` | Remove registered servers from the allow list |
 | `tx hosts help` | Show host management help |
 | `tx help` | Show help |
 
@@ -31,7 +31,7 @@ Bare `tx` still selects an existing local session. Except for `help`, `hosts`, a
 
 ## Installation
 
-Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf locally for session selection; remote servers do not need fzf or this wrapper. Host registration, deletion, and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
+Requires Bash 3.2+ and tmux. Remote execution also requires SSH and tmux on the remote host. Install fzf locally for session selection; remote servers do not need fzf or this wrapper. Host registration, removal, and listing do not require tmux, SSH, or fzf. Registration and listing SSH candidates additionally use awk.
 
 ```bash
 git clone https://github.com/ryqdev/tmuxer.git
@@ -61,7 +61,7 @@ source "$HOME/.local/share/tmuxer/tx.zsh" tx
 
 Run the same `source` command in your current shell to enable it immediately. For a custom `PREFIX` or `NAME`, use the exact command printed by the installer.
 
-Tab completes `tx remote @de` to `tx remote @dev`, SSH aliases after `hosts register`, registered hosts after `hosts delete`, and host management subcommands. Server reference completion reads the local allow list without connecting over SSH and is independent of `TR_HOSTS`. Local commands and remote commands after `@host` reuse Zsh's tmux command and option completion. Commands without a remote reference are not suggested. Dynamic session and target suggestions come from the local tmux completer, not from the remote server.
+Tab completes `tx remote @de` to `tx remote @dev`, SSH aliases after `hosts register`, registered hosts after `hosts remove`, and host management subcommands. Server reference completion reads the local allow list without connecting over SSH and is independent of `TR_HOSTS`. Local commands and remote commands after `@host` reuse Zsh's tmux command and option completion. Commands without a remote reference are not suggested. Dynamic session and target suggestions come from the local tmux completer, not from the remote server.
 
 ### Upgrading from tr
 
@@ -84,7 +84,8 @@ Existing allow-list files continue to work. Host management now lives under `hos
 | `tx remote exec dev ls` | `tx remote @dev ls` |
 | `tx remote exec dev` (tmux default command) | `tx remote @dev new-session` |
 | `tx remote register dev` | `tx hosts register dev` |
-| `tx remote delete dev` | `tx hosts delete dev` |
+| `tx remote delete dev` | `tx hosts remove dev` |
+| `tx hosts delete dev` | `tx hosts remove dev` |
 | `tx remote list` | `tx hosts list` |
 | `tx remote candidates` | `tx hosts candidates` |
 | `tx remote help` | `tx help` |
@@ -187,10 +188,10 @@ Remote previews and attaching after selection recheck registration. Removing a h
 Remove one or more registered servers with:
 
 ```bash
-tx hosts delete dev staging
+tx hosts remove dev staging
 tx hosts list
 ```
 
-`tx hosts delete` removes every occurrence of the exact destinations from the allow list, including legacy entries absent from SSH configuration. All names must be registered and syntactically valid; if any name is invalid or unknown, the entire deletion fails without changing the file. Deletion reads only the allow list and is independent of `TR_HOSTS`. Comments, blank lines, and the order of retained entries are preserved. The file is replaced atomically, with register/delete operations serialized to preserve concurrent changes.
+`tx hosts remove` removes every occurrence of the exact destinations from the allow list, including legacy entries absent from SSH configuration. All names must be registered and syntactically valid; if any name is invalid or unknown, the entire removal fails without changing the file. Removal reads only the allow list and is independent of `TR_HOSTS`. Comments, blank lines, and the order of retained entries are preserved. The file is replaced atomically, with register/remove operations serialized to preserve concurrent changes.
 
 You can also edit the allow-list file directly. It contains one destination per line; blank lines and lines starting with `#` are ignored. The `@` reference prefix belongs to the command line, not to the stored alias.

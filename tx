@@ -25,7 +25,7 @@ usage() {
         "  $PROGRAM hosts list              List registered hosts without connecting" \
         "  $PROGRAM hosts candidates        List SSH aliases available for registration" \
         "  $PROGRAM hosts register host [host ...]  Add SSH config aliases to the allow list" \
-        "  $PROGRAM hosts delete host [host ...]  Remove hosts from the allow list" \
+        "  $PROGRAM hosts remove host [host ...]  Remove hosts from the allow list" \
         "  $PROGRAM hosts help              Show host management help" \
         "  $PROGRAM help                    Show help" \
         'Remote tmux commands require a leading @host; all remaining arguments go to tmux.'
@@ -37,7 +37,7 @@ hosts_usage() {
         "  $PROGRAM hosts list              List every registered host, one per line" \
         "  $PROGRAM hosts candidates        List SSH aliases available for registration" \
         "  $PROGRAM hosts register host [host ...]  Add SSH config aliases to the allow list" \
-        "  $PROGRAM hosts delete host [host ...]  Remove hosts from the allow list" \
+        "  $PROGRAM hosts remove host [host ...]  Remove hosts from the allow list" \
         "  $PROGRAM hosts help              Show help" \
         "Allow list: $HOSTS_FILE" \
         'TR_HOSTS="a b c" filters discovery by tx remote (empty means no available hosts).'
@@ -112,7 +112,7 @@ load_registered_hosts() {
 lock_hosts_file() {
     local directory=${HOSTS_FILE%/*} lock=$HOSTS_FILE.lock attempts=0
     (umask 077; mkdir -p -- "$directory") || fail "cannot write allow list: $HOSTS_FILE"
-    # Serialize register/delete so replacing the file cannot lose an append.
+    # Serialize register/remove so replacing the file cannot lose an append.
     while ! (umask 077; mkdir -- "$lock") 2>/dev/null; do
         attempts=$((attempts + 1))
         [ "$attempts" -lt 100 ] || fail "timed out locking allow list: $HOSTS_FILE"
@@ -161,9 +161,9 @@ register_hosts() {
     printf 'Registered: %s\n' "$@"
 }
 
-delete_hosts() {
+remove_hosts() {
     local host line remove target link depth=0
-    [ "$#" -gt 0 ] || fail 'hosts delete requires at least one host'
+    [ "$#" -gt 0 ] || fail 'hosts remove requires at least one host'
     for host in "$@"; do validate_host "$host"; done
     if [ ! -e "$HOSTS_FILE" ] && [ ! -L "$HOSTS_FILE" ]; then
         fail "host is not registered: $1 (run: $PROGRAM hosts list)"
@@ -195,7 +195,7 @@ delete_hosts() {
     ) > "$HOSTS_TEMP" || fail "cannot write allow list: $HOSTS_FILE"
     mv -f -- "$HOSTS_TEMP" "$target" || fail "cannot write allow list: $HOSTS_FILE"
     HOSTS_TEMP=
-    printf 'Deleted: %s\n' "$@"
+    printf 'Removed: %s\n' "$@"
 }
 
 list_hosts() {
@@ -441,7 +441,7 @@ if [ "${1-}" = hosts ]; then
             [ "$#" -eq 0 ] || fail 'hosts help does not accept arguments'
             hosts_usage; exit 0 ;;
         register) register_hosts "$@"; exit 0 ;;
-        delete) delete_hosts "$@"; exit 0 ;;
+        remove) remove_hosts "$@"; exit 0 ;;
         list)
             [ "$#" -eq 0 ] || fail 'hosts list does not accept arguments'
             list_hosts; exit 0 ;;
